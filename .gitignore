@@ -1,1 +1,4 @@
 /dataset/*
+/backend/.venv/*
+*/__pycache__/*
+*/.venv/*

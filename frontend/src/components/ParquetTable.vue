@@ -38,50 +38,33 @@
                 :key="column" 
                 class="column-header"
                 :style="{ width: columnWidths[column] + 'px' }"
-                @click="sortBy(column)"
                 :class="{ 
                   'sortable': true, 
                   'sorted-asc': sortColumn === column && sortDirection === 'asc',
                   'sorted-desc': sortColumn === column && sortDirection === 'desc'
                 }">
-              <div class="column-title">
-                {{ column }}
-                <span v-if="sortColumn === column" class="sort-icon">
-                  {{ sortDirection === 'asc' ? '↑' : '↓' }}
-                </span>
-              </div>
-              <!-- 수치형 데이터의 경우 차트 표시 -->
-              <div v-if="distributions[column] && distributions[column].type === 'numeric'" class="column-chart">
-                <div class="mini-chart">
-                  <div class="mini-histogram">
-                    <div v-for="(count, index) in distributions[column].counts" 
-                         :key="index" 
-                         class="mini-histogram-bar"
-                         :style="{ height: (count / Math.max(...distributions[column].counts) * 30) + 'px' }"
-                         @mouseover="updateAxisLabel(column, index)"
-                         @mouseleave="resetAxisLabel(column)">
-                      <div v-if="currentAxisLabel[column] && currentAxisLabel[column].index === index" 
-                           class="tooltip">
-                        {{ currentAxisLabel[column].text }}
-                      </div>
+                <div class="column-title" @click="sortBy(column)">
+                    {{ column }}
+                    <span v-if="sortColumn === column" class="sort-icon">
+                        {{ sortDirection === 'asc' ? '↑' : '↓' }}
+                    </span>
+                </div>
+                <!-- 데이터 분포 표시 -->
+                <div class="distribution-container">
+                    <!-- 수치형 데이터의 경우 히스토그램 표시 -->
+                    <div v-if="distributions[column]?.type == 'numeric'" class="column-chart">
+                        <canvas :id="`chart-${columns.indexOf(column)}`"></canvas>
                     </div>
-                  </div>
+                    <!-- 범주형 데이터의 경우 상위 값 표시 -->
+                    <div v-else class="categorical-labels">
+                        <div v-for="(count, index) in distributions[column]?.counts.slice(0, 3)" 
+                            :key="index" 
+                            class="top-value"
+                            :data-tooltip="`${distributions[column].labels[index]}: ${count.toLocaleString()}건`">
+                            {{ distributions[column].labels[index] }}: {{ Math.round((count / totalRows) * 100) }}%
+                        </div>
+                    </div>
                 </div>
-                <div class="axis-labels">
-                  <div class="numeric-axis">
-                    <div class="x-axis-label min-value">{{ currentAxisLabel[column]?.text || distributions[column].labels[0] }}</div>
-                    <div class="x-axis-label max-value">{{ distributions[column].labels[distributions[column].labels.length - 1] }}</div>
-                  </div>
-                </div>
-              </div>
-              <div v-else-if="distributions[column] && distributions[column].type === 'categorical'" class="categorical-labels">
-                <div v-for="(count, index) in distributions[column].counts.slice(0, 3)" 
-                     :key="index" 
-                     class="top-value"
-                     :data-tooltip="`${distributions[column].labels[index]}: ${count.toLocaleString()}건`">
-                  {{ distributions[column].labels[index] }}: {{ Math.round((count / totalRows) * 100) }}%
-                </div>
-              </div>
             </th>
           </tr>
         </thead>
@@ -121,8 +104,11 @@
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import axios from 'axios'
+import { Chart, registerables } from 'chart.js'
+
+Chart.register(...registerables)
 
 const tableData = ref([])
 const columns = ref([])
@@ -134,15 +120,11 @@ const pageSize = 10
 const totalRows = ref(0)
 const sortColumn = ref(null)
 const sortDirection = ref(null)
-const currentAxisLabel = ref({})
 const query = ref('SELECT * FROM data')
 const queryError = ref(null)
-const sessionId = ref(null)
-const paginatedData = ref([])
-
+const file_path = ref(null)
 const totalPages = computed(() => Math.ceil(totalRows.value / pageSize))
 
-// 정렬된 데이터 계산
 const sortedData = computed(() => {
   if (!tableData.value) return []
   
@@ -186,14 +168,14 @@ const fetchPageData = async () => {
     loading.value = true
     const response = await axios.post('http://localhost:8000/page', {
       query: query.value,
-      session_id: sessionId.value,
       page: currentPage.value,
-      page_size: pageSize
+      page_size: pageSize,
+      file_path: file_path.value
     })
 
-    if (response.data.columns && response.data.data) {
+    if (response.data.columns && response.data.tableData) {
       columns.value = response.data.columns
-      tableData.value = response.data.data
+      tableData.value = response.data.tableData
     }
   } catch (err) {
     error.value = '페이지 데이터 로딩 중 오류가 발생했습니다: ' + err.message
@@ -202,41 +184,25 @@ const fetchPageData = async () => {
   }
 }
 
-// 컬럼명에 특수문자가 포함된 경우 큰따옴표로 감싸기
-const wrapColumnName = (column) => {
-  if (column.includes('%') || column.includes(' ') || column.includes('-')) {
-    return `"${column}"`
-  }
-  return column
-}
-
 // 쿼리 실행 함수
 const executeQuery = async () => {
   try {
     loading.value = true
     queryError.value = null
 
-    // 쿼리에서 컬럼명을 큰따옴표로 감싸기
-    let processedQuery = query.value
-    columns.value.forEach(col => {
-      const wrappedCol = wrapColumnName(col)
-      if (wrappedCol !== col) {
-        processedQuery = processedQuery.replace(new RegExp(col, 'g'), wrappedCol)
-      }
-    })
-
     const response = await axios.post('http://localhost:8000/query', {
-      query: processedQuery,
-      session_id: sessionId.value,
+      query: query.value,
       page: currentPage.value,
-      page_size: pageSize
+      page_size: pageSize,
+      file_path: file_path.value
     })
 
-    if (response.data.columns && response.data.data) {
+    if (response.data.columns && response.data.tableData) {
       columns.value = response.data.columns
-      tableData.value = response.data.data
+      tableData.value = response.data.tableData
       distributions.value = response.data.distributions
       totalRows.value = response.data.total
+      file_path.value = response.data.file_path
     }
   } catch (err) {
     queryError.value = err.response?.data?.detail || '쿼리 실행 중 오류가 발생했습니다.'
@@ -259,19 +225,18 @@ const handleFileUpload = async (event) => {
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await axios.post('http://localhost:8000/upload', formData, {
+    const response = await axios.post('http://localhost:8000/init', formData, {
       headers: {
         'Content-Type': 'multipart/form-data'
       }
     })
 
-    if (response.data.columns && response.data.preview) {
-      sessionId.value = response.data.session_id
+    if (response.data.columns && response.data.tableData) {
       columns.value = response.data.columns
-      tableData.value = response.data.preview
+      tableData.value = response.data.tableData
       distributions.value = response.data.distributions
       totalRows.value = response.data.total
-      paginatedData.value = tableData.value.slice(0, pageSize)
+      file_path.value = response.data.file_path
     }
   } catch (err) {
     error.value = '파일 처리 중 오류가 발생했습니다: ' + err.message
@@ -282,7 +247,6 @@ const handleFileUpload = async (event) => {
 
 const sortBy = (column) => {
   if (sortColumn.value === column) {
-    // 같은 컬럼을 다시 클릭한 경우
     if (sortDirection.value === 'asc') {
       sortDirection.value = 'desc'
     } else if (sortDirection.value === 'desc') {
@@ -290,7 +254,6 @@ const sortBy = (column) => {
       sortDirection.value = null
     }
   } else {
-    // 다른 컬럼을 클릭한 경우
     sortColumn.value = column
     sortDirection.value = 'asc'
   }
@@ -316,19 +279,139 @@ const columnWidths = computed(() => {
   return widths;
 });
 
-const updateAxisLabel = (column, index) => {
-  const distribution = distributions[column];
-  const label = distribution.labels[index];
-  const count = distribution.counts[index];
-  currentAxisLabel.value[column] = {
-    index,
-    text: `${label}: ${count.toLocaleString()}건`
-  };
-}
+// 차트 인스턴스를 저장할 객체
+const charts = ref({})
 
-const resetAxisLabel = (column) => {
-  currentAxisLabel.value[column] = null;
-}
+// 차트 생성 함수
+const createChart = async (column, data) => {
+  await nextTick();
+  const chartId = `chart-${columns.value.indexOf(column)}`;
+  const ctx = document.getElementById(chartId);
+  if (!ctx) return;
+
+  if (charts.value[column]) charts.value[column].destroy();
+
+  // x축 레이블: 첫 bin의 왼쪽, 마지막 bin의 오른쪽만
+  const leftLabel = data.labels[0];
+  const rightLabel = data.labels[data.labels.length - 1];
+  const xLabels = data.labels.map((_, idx, arr) => {
+    if (idx === 0) return leftLabel;
+    if (idx === arr.length - 1) return rightLabel;
+    return '';
+  });
+
+  charts.value[column] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: xLabels,
+      datasets: [{
+        data: data.counts,
+        backgroundColor: 'rgba(120, 80, 200, 0.5)',
+        borderWidth: 0,
+        barPercentage: 1.0,
+        categoryPercentage: 1.0,
+        hoverBackgroundColor: 'rgba(120, 80, 200, 0.8)'
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: 0 },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          displayColors: false,
+          backgroundColor: 'rgba(255,255,255,0.95)',
+          titleColor: '#222',
+          bodyColor: '#222',
+          titleFont: { weight: 'bold', size: 11 },
+          bodyFont: { weight: 'bold', size: 11 },
+          borderColor: '#aaa',
+          borderWidth: 1,
+          padding: 4,
+          caretSize: 4,
+          cornerRadius: 3,
+          position: 'nearest',
+          callbacks: {
+            title: (ctx) => {
+              const idx = ctx[0].dataIndex;
+              const start = data.labels[idx];
+              const end = data.labels[idx + 1] || '';
+              return `${start} to ${end}`;
+            },
+            label: (ctx) => {
+              const value = ctx.raw;
+              const total = data.counts.reduce((a, b) => a + b, 0);
+              const percent = ((value / total) * 100).toFixed(2);
+              const valueStr = value >= 1000 ? (value / 1000).toFixed(2) + 'k' : value;
+              return `${valueStr} (${percent}%)`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false, drawBorder: false },
+          ticks: {
+            display: true,
+            font: { size: 11 },
+            align: (ctx) => {
+              if (ctx.index === 0) return 'start';
+              if (ctx.index === ctx.chart.data.labels.length - 1) return 'end';
+              return 'center';
+            },
+            callback: function(val, idx, arr) {
+              let label = '';
+              if (idx === 0) label = leftLabel;
+              else if (idx === arr.length - 1) label = rightLabel;
+              else return '';
+              if (label.length > 6) return label.slice(0, 6) + '...';
+              return label;
+            },
+            color: '#222',
+            padding: 0,
+          },
+          border: { display: false }
+        },
+        y: {
+          display: false,
+          grid: { display: false, drawBorder: false },
+          ticks: { display: false }
+        }
+      }
+    }
+  });
+};
+
+// distributions가 변경될 때 차트 업데이트
+watch(distributions, async (newDistributions) => {
+    if (!newDistributions) return
+
+    for (const column in newDistributions) {
+        if (newDistributions[column]?.type === 'numeric') {
+            await createChart(column, newDistributions[column])
+        }
+    }
+}, { deep: true })
+
+// 컴포넌트가 마운트된 후 차트 생성
+onMounted(async () => {
+    if (distributions.value) {
+        for (const column in distributions.value) {
+            if (distributions.value[column]?.type === 'numeric') {
+                await createChart(column, distributions.value[column])
+            }
+        }
+    }
+})
+
+
+// 컴포넌트가 언마운트될 때 차트 정리
+onUnmounted(() => {
+    for (const chart of Object.values(charts.value)) {
+        chart.destroy()
+    }
+})
 </script>
 
 <style scoped>
@@ -485,7 +568,7 @@ tr:hover td {
 }
 
 .column-title {
-  margin-bottom: 15px;
+  margin-top:10px;
   color: #2c3e50;
   font-size: 1.1em;
   font-weight: 700;
@@ -494,133 +577,94 @@ tr:hover td {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+}
+
+.distribution-container {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 90px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #f8f9fa;
+    border-top: 1px solid #e9ecef;
+    z-index: 1;
+}
+
+.column-chart,
+.categorical-labels {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 8px;
 }
 
 .column-chart {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 90px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  background-color: #f8f9fa;
-  width: 100%;
+    width: 100%;
+    height: 100%;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background-color: #f8f9fa;
+    border-radius: 4px;
+    padding: 0;
 }
 
-.mini-chart {
-  height: 30px;
-  width: 100%;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 1px;
-  margin-bottom: 4px;
-}
-
-.mini-histogram {
-  display: flex;
-  align-items: flex-end;
-  height: 100%;
-  width: 100%;
-  gap: 1px;
-  padding: 0 4px;
-}
-
-.mini-histogram-bar {
-  flex: 1;
-  background-color: #3498db;
-  min-width: 2px;
-  border-radius: 1px 1px 0 0;
-  transition: background-color 0.2s ease;
-  cursor: pointer;
-  position: relative;
-}
-
-.mini-histogram-bar:hover {
-  background-color: #2980b9;
-}
-
-.axis-labels {
-  height: 15px;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  color: #666;
-  margin-top: 2px;
-}
-
-.numeric-axis {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  padding: 0 4px;
-}
-
-.x-axis-label {
-  font-size: 11px;
-  color: #666;
-  transition: all 0.2s ease;
+.column-chart canvas {
+    width: 100% !important;
+    height: 100% !important;
 }
 
 .categorical-labels {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 0;
-  margin: 10px;
-  height: 90px;
-  justify-content: center;
-  background-color: #f8f9fa;
-  width: calc(100% - 20px);
+    gap: 4px;
 }
 
 .top-value {
-  font-size: 13px;
-  color: #2c3e50;
-  white-space: nowrap;
-  font-weight: 600;
-  background-color: rgba(255, 255, 255, 0.9);
-  padding: 4px 12px;
-  border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  cursor: help;
-  transition: all 0.2s ease;
-  position: relative;
-  min-width: 120px;
-  text-align: center;
+    font-size: 13px;
+    color: #2c3e50;
+    white-space: nowrap;
+    font-weight: 600;
+    background-color: rgba(255, 255, 255, 0.9);
+    padding: 4px 12px;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    cursor: default;
+    transition: all 0.2s ease;
+    position: relative;
+    min-width: 120px;
+    text-align: center;
+    overflow: visible;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 
 .top-value:hover {
-  background-color: #e3f2fd;
-  transform: scale(1.05);
+    background-color: #e3f2fd;
+    transform: scale(1.05);
 }
 
-.top-value:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 100%;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(0, 0, 0, 0.8);
-  color: white;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  white-space: nowrap;
-  z-index: 1000;
-  margin-bottom: 5px;
+.top-value[data-tooltip]:hover::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    margin-bottom: 5px;
+    pointer-events: none;
 }
 
 /* 페이징 스타일 */

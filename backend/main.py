@@ -1,16 +1,16 @@
 import os
-import io
-import uuid
-from typing import Dict
+import json
+
+import numpy as np
+import duckdb
+import polars as pl
+import uvicorn
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import duckdb
-import pandas as pd
-import pyarrow.parquet as pq
-import uvicorn
+
 
 app = FastAPI()
 
@@ -22,148 +22,127 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# 세션별 데이터프레임 저장소
-session_data: Dict[str, str] = {}
-
 class QueryRequest(BaseModel):
     query: str
-    session_id: str
+    file_path: str
     page: int
     page_size: int
 
-class SessionResponse(BaseModel):
-    session_id: str
-
-def wrap_column_name(column: str) -> str:
+def wrap_column_name(column):
     return f'"{column}"'
 
-def calculate_distributions(file_path, columns):
+def calculate_distributions(query):
     distributions = {}
-    con = duckdb.connect()
+    with duckdb.connect() as con:
+        df = con.execute(query).pl()
+        
+        for col in df.columns:
+            dtype_str = str(df.schema[col]).lower()
 
-    for column in columns:
-        wrapped_column = wrap_column_name(column)
-        try:
-            col_type = con.execute(f"DESCRIBE SELECT {wrapped_column} FROM read_parquet('{file_path}')").df()['column_type'][0]
-            print(f"Column: {column}, Type: {col_type}")
+            if dtype_str in ['string', 'varchar', 'char', 'text', 'boolean', 'utf8']:
+                value_counts = df[col].value_counts().sort("count", descending=True)
+                
+                labels = value_counts[col].to_list()
+                counts = value_counts["count"].to_list()
 
-            if col_type == 'VARCHAR':
-                # 범주형 열 처리
-                query = f"""
-                SELECT {wrapped_column}, COUNT(*) AS count
-                FROM read_parquet('{file_path}')
-                GROUP BY {wrapped_column}
-                ORDER BY count DESC
-                """
-                result = con.execute(query).df()
-                distributions[column] = {
+                distributions[col] = {
                     'type': 'categorical',
-                    'counts': result['count'].tolist(),
-                    'labels': result[column].tolist()
+                    'counts': counts,
+                    'labels': labels
                 }
             else:
-                # 수치형 열 처리 (INTEGER, FLOAT, DOUBLE 등)
-                query = f"""
-                SELECT histogram({wrapped_column}) AS hist
-                FROM read_parquet('{file_path}')
-                """
-                hist = con.execute(query).df()['hist'][0]
-                distributions[column] = { 
+                series = df[col].drop_nulls().to_numpy()
+                if len(series) == 0:
+                    continue
+
+
+                min_val = int(np.floor(series.min()))
+                max_val = int(np.ceil(series.max()))
+
+                bin_edges = np.linspace(min_val, max_val, num=21)
+                bin_edges = np.unique(np.round(bin_edges).astype(int))  # 중복 제거
+
+                # 경계가 중복되면 bin 수가 줄어들 수 있음
+                if len(bin_edges) < 2:
+                    continue
+
+                counts, _ = np.histogram(series, bins=bin_edges)
+                labels = [str(b) for b in bin_edges[:-1]]
+
+                print(col)
+                print(counts)
+                print(labels)            
+                distributions[col] = {
                     'type': 'numeric',
-                    'counts': list(hist.values()),
-                    'labels': [str(k) for k in hist.keys()]
+                    'counts': counts.tolist(),
+                    'labels': labels
                 }
-        except Exception as e:
-            print(f"Error processing column {column}: {str(e)}")
-            continue
-    
+
     return distributions
 
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    session_id = str(uuid.uuid4())
+@app.post("/init")
+async def get_file(file: UploadFile = File(...)):
     file_name = file.filename.split('.')[0]
     file_path = os.path.join(os.getcwd(), "..", "dataset", f"{file_name}.parquet")
     
-    query = f"SELECT * FROM read_parquet('{file_path}') LIMIT 10"
-    preview = duckdb.sql(query).df().to_dict(orient="records")
+    with duckdb.connect() as con:
+        query = f"SELECT * FROM read_parquet('{file_path}')"
+        sample_query = f"{query} LIMIT 10"
+        preview = con.execute(sample_query).pl()
 
-    total_count = duckdb.sql(f"SELECT COUNT(*) FROM read_parquet('{file_path}')").fetchone()[0]
-    columns = duckdb.sql(f"DESCRIBE SELECT * FROM read_parquet('{file_path}')").df()['column_name'].tolist()
-    session_data[session_id] = file_path
-    distributions = calculate_distributions(file_path, columns)
+        total_count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{file_path}')").fetchone()[0]
+        columns = con.execute(sample_query).pl().columns
+        
+        distributions = calculate_distributions(query)
     
     return JSONResponse({
-        "session_id": session_id,
+        "file_path": file_path,
         "columns": columns,
-        "preview": preview,
+        "tableData": preview.to_dicts(),
         "distributions": distributions,
         "total": total_count
     })
 
 @app.post("/page")
-async def execute_query(request: QueryRequest):
-    if request.session_id not in session_data:
-        raise HTTPException(status_code=400, detail="유효하지 않은 세션입니다.")
-    
-    file_path = session_data[request.session_id]
-    
-    # 페이징 쿼리
-    offset = (request.page - 1) * request.page_size
-    query = f"{request.query} LIMIT {request.page_size} OFFSET {offset}"
-    result = duckdb.sql(query.replace('data', f"read_parquet('{file_path}')")).df()
+async def get_page(request: QueryRequest):
+    query = request.query.replace('FROM data', f"FROM read_parquet('{request.file_path}')")
+
+    with duckdb.connect() as con:
+        offset = (request.page - 1) * request.page_size
+        query = f"{query} LIMIT {request.page_size} OFFSET {offset}"
+        print(query)
+        result = con.execute(query).pl()
+        print(result)
+        columns = result.columns
     
     return JSONResponse({
-        "columns": result.columns.tolist(),
-        "data": result.to_dict(orient="records")
+        "columns": columns,
+        "tableData": result.to_dicts()
     })
 
 @app.post("/query")
-async def execute_duck_query(request: QueryRequest):
-    file_path = session_data[request.session_id]
+async def execute_query(request: QueryRequest):
+    print("Request data:", request.dict())  # 요청 데이터 로깅
     
-    con = duckdb.connect()
+    if not request.query:
+        raise HTTPException(status_code=400, detail="Query is required")
     
-    # 전체 결과 수를 가져오기 위한 쿼리
-    query = request.query.replace('data', f"read_parquet('{file_path}')")
-    count_query = f"SELECT COUNT(*) as total FROM ({query}) as subquery"
-    total_count = duckdb.sql(count_query).fetchone()[0]
+    query = request.query.replace('FROM data', f"FROM read_parquet('{request.file_path}')")
     
-    # 페이징 쿼리
-    offset = (request.page - 1) * request.page_size
-    query = f"{request.query} LIMIT {request.page_size} OFFSET {offset}"
-    result = duckdb.sql(query).df()
-    result = result.to_dict(orient="records")
-    
-    distributions = calculate_distributions(file_path, result.columns.tolist())
+    with duckdb.connect() as con:
+        offset = (request.page - 1) * request.page_size
+        query = f"{query} LIMIT {request.page_size} OFFSET {offset}"
+        print("Executing query:", query)  # 실행할 쿼리 로깅
+        result = con.execute(query).pl()  
+        columns = result.columns
+        distributions = calculate_distributions(query)
     
     return JSONResponse({
-        "columns": result.columns.tolist(),
-        "data": result.to_dict(orient="records"),
+        "columns": columns,
+        "tableData": result.to_dicts(),
         "distributions": distributions,
-        "total": total_count
+        "total": len(result)
     })
-
-@app.get("/schema")
-async def get_schema(session_id: str):
-    if session_id not in session_data:
-        raise HTTPException(status_code=400, detail="유효하지 않은 세션입니다.")
-    
-    file_path = session_data[session_id]
-    con = duckdb.connect()
-    schema = con.execute(f"DESCRIBE SELECT * FROM read_parquet('{file_path}')").df()
-    
-    return JSONResponse({
-        "columns": schema['column_name'].tolist(),
-        "dtypes": dict(zip(schema['column_name'], schema['column_type']))
-    })
-
-@app.delete("/session/{session_id}")
-async def delete_session(session_id: str):
-    if session_id in session_data:
-        del session_data[session_id]
-    return JSONResponse({"message": "세션이 삭제되었습니다."})
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True) 
