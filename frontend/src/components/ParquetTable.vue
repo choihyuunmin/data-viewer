@@ -23,10 +23,6 @@
       <input type="file" @change="handleFileUpload" accept=".parquet" />
     </div>
     
-    <div v-if="loading" class="loading">
-      파일을 로딩중입니다...
-    </div>
-    
     <div class="total-rows">
       총 {{ totalRows.toLocaleString() }}개
     </div>
@@ -73,7 +69,8 @@
             <td v-for="column in columns" 
                 :key="column" 
                 class="table-cell"
-                :style="{ width: columnWidths[column] + 'px' }">
+                :style="{ width: columnWidths[column] + 'px' }"
+            >
               {{ row[column] }}
             </td>
           </tr>
@@ -291,9 +288,9 @@ const createChart = async (column, data) => {
 
   if (charts.value[column]) charts.value[column].destroy();
 
-  // x축 레이블: 첫 bin의 왼쪽, 마지막 bin의 오른쪽만
   const leftLabel = data.labels[0];
   const rightLabel = data.labels[data.labels.length - 1];
+
   const xLabels = data.labels.map((_, idx, arr) => {
     if (idx === 0) return leftLabel;
     if (idx === arr.length - 1) return rightLabel;
@@ -307,31 +304,18 @@ const createChart = async (column, data) => {
       datasets: [{
         data: data.counts,
         backgroundColor: 'rgba(120, 80, 200, 0.5)',
+        hoverBackgroundColor: 'rgba(120, 80, 200, 0.8)',
         borderWidth: 0,
         barPercentage: 1.0,
-        categoryPercentage: 1.0,
-        hoverBackgroundColor: 'rgba(120, 80, 200, 0.8)'
+        categoryPercentage: 1.0
       }]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: 0 },
       plugins: {
         legend: { display: false },
         tooltip: {
-          displayColors: false,
-          backgroundColor: 'rgba(255,255,255,0.95)',
-          titleColor: '#222',
-          bodyColor: '#222',
-          titleFont: { weight: 'bold', size: 11 },
-          bodyFont: { weight: 'bold', size: 11 },
-          borderColor: '#aaa',
-          borderWidth: 1,
-          padding: 4,
-          caretSize: 4,
-          cornerRadius: 3,
-          position: 'nearest',
           callbacks: {
             title: (ctx) => {
               const idx = ctx[0].dataIndex;
@@ -343,39 +327,36 @@ const createChart = async (column, data) => {
               const value = ctx.raw;
               const total = data.counts.reduce((a, b) => a + b, 0);
               const percent = ((value / total) * 100).toFixed(2);
-              const valueStr = value >= 1000 ? (value / 1000).toFixed(2) + 'k' : value;
-              return `${valueStr} (${percent}%)`;
+              return `${value} (${percent}%)`;
             }
           }
         }
       },
       scales: {
         x: {
-          grid: { display: false, drawBorder: false },
+          offset: true,
+          grid: { display: false },
           ticks: {
-            display: true,
-            font: { size: 11 },
-            align: (ctx) => {
-              if (ctx.index === 0) return 'start';
-              if (ctx.index === ctx.chart.data.labels.length - 1) return 'end';
+            align: (context) => {
+              if (context.index === 0) return 'start';
+              if (context.index === context.chart.data.labels.length - 1) return 'end';
               return 'center';
             },
+            maxRotation: 0,
+            minRotation: 0,
             callback: function(val, idx, arr) {
-              let label = '';
-              if (idx === 0) label = leftLabel;
-              else if (idx === arr.length - 1) label = rightLabel;
-              else return '';
-              if (label.length > 6) return label.slice(0, 6) + '...';
-              return label;
+              if (idx === 0) return leftLabel.length > 6 ? leftLabel.slice(0, 6) + '...' : leftLabel;
+              if (idx === arr.length - 1) return rightLabel.length > 6 ? rightLabel.slice(0, 6) + '...' : rightLabel;
+              return '';
             },
             color: '#222',
-            padding: 0,
-          },
-          border: { display: false }
+            font: { size: 11 },
+            padding: 4
+          }
         },
         y: {
           display: false,
-          grid: { display: false, drawBorder: false },
+          grid: { display: false },
           ticks: { display: false }
         }
       }
@@ -405,13 +386,13 @@ onMounted(async () => {
     }
 })
 
-
 // 컴포넌트가 언마운트될 때 차트 정리
 onUnmounted(() => {
     for (const chart of Object.values(charts.value)) {
         chart.destroy()
     }
 })
+
 </script>
 
 <style scoped>
@@ -605,7 +586,7 @@ tr:hover td {
 }
 
 .column-chart {
-    width: 100%;
+    width: 95%;
     height: 100%;
     position: relative;
     display: flex;
