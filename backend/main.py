@@ -40,6 +40,7 @@ def calculate_distributions(query):
             dtype_str = str(df.schema[col]).lower()
 
             if dtype_str in ['string', 'varchar', 'char', 'text', 'boolean', 'utf8']:
+                
                 value_counts = df[col].value_counts().sort("count", descending=True)
                 
                 labels = value_counts[col].to_list()
@@ -51,16 +52,18 @@ def calculate_distributions(query):
                     'labels': labels
                 }
             else:
+                print(col)
                 series = df[col].drop_nulls().to_numpy()
                 if len(series) == 0:
                     continue
-
 
                 min_val = int(np.floor(series.min()))
                 max_val = int(np.ceil(series.max()))
 
                 bin_edges = np.linspace(min_val, max_val, num=21)
-                bin_edges = np.unique(np.round(bin_edges).astype(int))  # 중복 제거
+                bin_edges = np.unique(np.round(bin_edges).astype(int))
+
+                print(bin_edges)
 
                 # 경계가 중복되면 bin 수가 줄어들 수 있음
                 if len(bin_edges) < 2:
@@ -69,9 +72,6 @@ def calculate_distributions(query):
                 counts, _ = np.histogram(series, bins=bin_edges)
                 labels = [str(b) for b in bin_edges[:-1]]
 
-                print(col)
-                print(counts)
-                print(labels)            
                 distributions[col] = {
                     'type': 'numeric',
                     'counts': counts.tolist(),

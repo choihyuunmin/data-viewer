@@ -1,24 +1,38 @@
-<script setup>
-import ParquetTable from './components/ParquetTable.vue'
+<script>
+export default {
+  name: 'App'
+}
 </script>
 
 <template>
-  <div class="app">
-    <h1>데이터셋 뷰어</h1>
-    <ParquetTable />
+  <div id="app">
+    <iframe
+      src="/src/components/DataViewer.html"
+      frameborder="0"
+      style="width: 100%; height: 100%; border: none;"
+    ></iframe>
   </div>
 </template>
 
 <style>
-.app {
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 20px;
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
-h1 {
-  color: #2c3e50;
-  text-align: center;
-  margin-bottom: 30px;
+#app {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #f8f9fa;
 }
 </style>

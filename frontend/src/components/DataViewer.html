@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Viewer</title>
+    <link rel="stylesheet" href="DataViewer.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="data-viewer-container"></div>
+    <script type="module">
+        import DataViewer from './DataViewer.js'
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            new DataViewer('data-viewer-container')
+        })
+    </script>
+</body>
+</html> 
