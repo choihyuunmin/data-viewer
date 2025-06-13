@@ -31,6 +31,9 @@ class QueryRequest(BaseModel):
 def wrap_column_name(column):
     return f'"{column}"'
 
+def extract_total_count(con, query: str) -> int:
+    return con.execute(f"SELECT COUNT(*) AS total FROM ({query}) AS subquery").fetchone()[0]
+
 def calculate_distributions(query):
     distributions = {}
     with duckdb.connect() as con:
@@ -52,7 +55,6 @@ def calculate_distributions(query):
                     'labels': labels
                 }
             else:
-                print(col)
                 series = df[col].drop_nulls().to_numpy()
                 if len(series) == 0:
                     continue
@@ -60,17 +62,16 @@ def calculate_distributions(query):
                 min_val = int(np.floor(series.min()))
                 max_val = int(np.ceil(series.max()))
 
-                bin_edges = np.linspace(min_val, max_val, num=21)
-                bin_edges = np.unique(np.round(bin_edges).astype(int))
-
-                print(bin_edges)
-
-                # 경계가 중복되면 bin 수가 줄어들 수 있음
-                if len(bin_edges) < 2:
-                    continue
-
-                counts, _ = np.histogram(series, bins=bin_edges)
-                labels = [str(b) for b in bin_edges[:-1]]
+                # min_val과 max_val이 같은 경우 (bin이 한 개일 때)
+                if min_val == max_val:
+                    bin_edges = np.array([min_val, max_val + 1])
+                    counts = np.array([len(series)])
+                    labels = [str(min_val)]
+                else:
+                    bin_edges = np.linspace(min_val, max_val, num=21)
+                    bin_edges = np.unique(np.round(bin_edges).astype(int))
+                    counts, _ = np.histogram(series, bins=bin_edges)
+                    labels = [str(b) for b in bin_edges[:-1]]
 
                 distributions[col] = {
                     'type': 'numeric',
@@ -86,14 +87,14 @@ async def get_file(file: UploadFile = File(...)):
     file_path = os.path.join(os.getcwd(), "..", "dataset", f"{file_name}.parquet")
     
     with duckdb.connect() as con:
-        query = f"SELECT * FROM read_parquet('{file_path}')"
-        sample_query = f"{query} LIMIT 10"
+        base_query = f"SELECT * FROM read_parquet('{file_path}')"
+        sample_query = f"{base_query} LIMIT 10"
         preview = con.execute(sample_query).pl()
 
-        total_count = con.execute(f"SELECT COUNT(*) FROM read_parquet('{file_path}')").fetchone()[0]
-        columns = con.execute(sample_query).pl().columns
+        total_count = extract_total_count(con, base_query)
+        columns = preview.columns
         
-        distributions = calculate_distributions(query)
+        distributions = calculate_distributions(base_query)
     
     return JSONResponse({
         "file_path": file_path,
@@ -105,7 +106,8 @@ async def get_file(file: UploadFile = File(...)):
 
 @app.post("/page")
 async def get_page(request: QueryRequest):
-    query = request.query.replace('FROM data', f"FROM read_parquet('{request.file_path}')")
+    query = request.query.lower()
+    query = query.replace('from data', f"FROM read_parquet('{request.file_path}')")
 
     with duckdb.connect() as con:
         offset = (request.page - 1) * request.page_size
@@ -122,26 +124,26 @@ async def get_page(request: QueryRequest):
 
 @app.post("/query")
 async def execute_query(request: QueryRequest):
-    print("Request data:", request.dict())  # 요청 데이터 로깅
-    
     if not request.query:
         raise HTTPException(status_code=400, detail="Query is required")
     
-    query = request.query.replace('FROM data', f"FROM read_parquet('{request.file_path}')")
+    query = request.query.lower()
+    query = query.replace('from data', f"FROM read_parquet('{request.file_path}')")
     
     with duckdb.connect() as con:
-        offset = (request.page - 1) * request.page_size
-        query = f"{query} LIMIT {request.page_size} OFFSET {offset}"
-        print("Executing query:", query)  # 실행할 쿼리 로깅
-        result = con.execute(query).pl()  
-        columns = result.columns
+        sample_query = f"{query} LIMIT 10"
+        preview = con.execute(sample_query).pl()
+
+        total_count = extract_total_count(con, query)
+        columns = preview.columns
+        
         distributions = calculate_distributions(query)
     
     return JSONResponse({
         "columns": columns,
-        "tableData": result.to_dicts(),
+        "tableData": preview.to_dicts(),
         "distributions": distributions,
-        "total": len(result)
+        "total": total_count
     })
 
 if __name__ == "__main__":

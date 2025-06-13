@@ -9,101 +9,20 @@ class DataViewer {
             console.error(`Container with id ${containerId} not found`)
             return
         }
-
-        this.query = ''
+        
+        this.query = 'select * from data'
+        this.columns = []
+        this.distributions = []
+        this.tableData = []
         this.file_path = null
         this.charts = {}
+        this.pageSize = 10
+        this.currentPage = 1
+        this.totalRows = 0
+        this.totalPages = 0
 
         this.initializeElements()
         this.attachEventListeners()
-    }
-
-    getOrCreateTooltip(chart) {
-        let tooltipEl = chart.canvas.parentNode.querySelector('div')
-
-        if (!tooltipEl) {
-            tooltipEl.style.opacity = 1;
-            tooltipEl.style.left = positionX + tooltip.caretX + 'px';
-            tooltipEl.style.top = positionY + tooltip.caretY + 'px';
-            tooltipEl.style.font = tooltip.options.bodyFont.string;
-            tooltipEl.style.padding = tooltip.options.padding + 'px ' + tooltip.options.padding + 'px';
-          
-            const table = document.createElement('table')
-            table.style.margin = '0px'
-            table.style.borderSpacing = '0'
-            table.style.borderCollapse = 'collapse'
-
-            tooltipEl.appendChild(table)
-            chart.canvas.parentNode.appendChild(tooltipEl)
-        }
-
-        return tooltipEl
-    }
-
-    externalTooltipHandler(context) {
-        const { chart, tooltip } = context
-        const tooltipEl = this.getOrCreateTooltip(chart)
-
-        if (tooltip.opacity === 0) {
-            tooltipEl.style.opacity = 0
-            return
-        }
-
-        const position = chart.canvas.getBoundingClientRect()
-        const bodyFont = tooltip.options.bodyFont
-
-        tooltipEl.style.opacity = 1
-        tooltipEl.style.position = 'fixed'
-        tooltipEl.style.left = position.left + tooltip.caretX + 'px'
-        tooltipEl.style.top = position.top + tooltip.caretY + 'px'
-        tooltipEl.style.font = bodyFont.string
-        tooltipEl.style.padding = tooltip.options.padding + 'px'
-        tooltipEl.style.background = 'rgba(0, 0, 0, 0.8)'
-        tooltipEl.style.borderRadius = '4px'
-        tooltipEl.style.color = 'white'
-        tooltipEl.style.pointerEvents = 'none'
-        tooltipEl.style.transform = 'translate(-50%, -100%)'
-        tooltipEl.style.transition = 'all .1s ease'
-        tooltipEl.style.zIndex = '1000'
-        tooltipEl.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)'
-
-        const table = tooltipEl.querySelector('table')
-        table.style.margin = '0px'
-        table.style.borderSpacing = '0'
-        table.style.borderCollapse = 'collapse'
-
-        if (tooltip.body) {
-            const titleLines = tooltip.title || []
-            const bodyLines = tooltip.body.map(bodyItem => bodyItem.lines)
-
-            const tableHead = document.createElement('thead')
-            titleLines.forEach(title => {
-                const tr = document.createElement('tr')
-                tr.style.borderWidth = '0'
-                const th = document.createElement('th')
-                th.style.borderWidth = '0'
-                const text = document.createTextNode(title)
-                th.appendChild(text)
-                tr.appendChild(th)
-                tableHead.appendChild(tr)
-            })
-            table.appendChild(tableHead)
-
-            const tableBody = document.createElement('tbody')
-            bodyLines.forEach((body, i) => {
-                const tr = document.createElement('tr')
-                tr.style.backgroundColor = 'inherit'
-                tr.style.borderWidth = '0'
-
-                const td = document.createElement('td')
-                td.style.borderWidth = '0'
-                const text = document.createTextNode(body)
-                td.appendChild(text)
-                tr.appendChild(td)
-                tableBody.appendChild(tr)
-            })
-            table.appendChild(tableBody)
-        }
     }
 
     initializeElements() {
@@ -185,14 +104,13 @@ class DataViewer {
         this.prevButton.addEventListener('click', () => {
             if (this.currentPage > 1) {
                 this.currentPage--
-                this.executeQuery()
+                this.changePage(this.currentPage)
             }
         })
         this.nextButton.addEventListener('click', () => {
-            const totalPages = Math.ceil(this.totalRows / this.pageSize)
-            if (this.currentPage < totalPages) {
+            if (this.currentPage < this.totalPages) {
                 this.currentPage++
-                this.executeQuery()
+                this.changePage(this.currentPage)
             }
         })
     }
@@ -207,29 +125,80 @@ class DataViewer {
         this.error = null
 
         try {
-            const response = await fetch(`${config.apiBaseUrl}${config.endpoints.query}`, {
+            const response = await fetch(`${config.api.baseUrl}/query`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    query: this.query,
+                    query: this.queryInput.value,
                     page: this.currentPage,
                     page_size: this.pageSize,
                     file_path: this.file_path
                 })
             })
 
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`)
-            }
-
             const data = await response.json()
-            this.updateTable(data)
-            this.updatePagination(data.total_rows)
+            console.log('Query Response:', data)
+            
+            if (data.tableData) {
+                this.tableData = data.tableData
+                this.totalRows = data.total
+                this.columns = data.columns
+                this.distributions = data.distributions
+                this.totalPages = Math.ceil(this.totalRows / this.pageSize)
+                
+                console.log('Updated State:', {
+                    totalRows: this.totalRows,
+                    totalPages: this.totalPages,
+                    currentPage: this.currentPage,
+                    pageSize: this.pageSize
+                })
+                
+                this.updateTable()
+                this.updatePagination()
+            }
         } catch (error) {
             console.error('Query execution error:', error)
             this.error = error.message
+            alert(this.error)
+        } finally {
+            this.loading = false
+        }
+    }
+
+    async changePage(page) {
+        if (!this.file_path) {
+            alert('파일을 먼저 업로드해주세요.')
+            return
+        }
+
+        this.loading = true
+        this.error = null
+
+        try {
+            const response = await fetch(`${config.api.baseUrl}/page`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    query: this.queryInput.value,
+                    page: page,
+                    page_size: this.pageSize,
+                    file_path: this.file_path
+                })
+            })
+
+            const data = await response.json()
+            
+            this.tableData = data.tableData
+            this.updateTableBody()
+            this.updatePagination()
+        } catch (error) {
+            console.error('Page change error:', error)
+            this.error = error.message
+            alert(this.error)
         } finally {
             this.loading = false
         }
@@ -249,7 +218,7 @@ class DataViewer {
             const formData = new FormData()
             formData.append('file', file)
 
-            const response = await fetch(`${config.api.baseUrl}${config.api.endpoints.init}`, {
+            const response = await fetch(`${config.api.baseUrl}/init`, {
                 method: 'POST',
                 body: formData
             })
@@ -264,6 +233,7 @@ class DataViewer {
                 this.tableData = data.tableData
                 this.distributions = data.distributions
                 this.totalRows = data.total
+                this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 this.file_path = data.file_path
                 this.updateTable()
                 this.updatePagination()
@@ -318,9 +288,44 @@ class DataViewer {
                 const td = document.createElement('td')
                 td.className = 'table-cell'
                 td.textContent = row[column]
+                if (this.isNumericColumn(column)) {
+                    td.dataset.value = row[column]
+                    td.dataset.column = column
+                }
                 tr.appendChild(td)
             })
             this.tableBody.appendChild(tr)
+        })
+
+        // 테이블 셀에 이벤트 리스너 추가
+        this.tableBody.querySelectorAll('.table-cell').forEach(cell => {
+            if (cell.dataset.value && cell.dataset.column) {
+                const column = cell.dataset.column
+                const chart = this.charts[column]
+                if (chart) {
+                    cell.addEventListener('mouseover', () => {
+                        const value = parseFloat(cell.dataset.value)
+                        const data = this.distributions[column]
+                        if (data && data.labels) {
+                            const binIndex = this.getBinIndex(value, data.labels)
+                            if (binIndex !== -1) {
+                                const newColors = chart.data.datasets[0].data.map((_, idx) =>
+                                    idx === binIndex ? 'rgba(255, 99, 132, 0.8)' : 'rgba(54, 162, 235, 0.5)'
+                                )
+                                chart.data.datasets[0].backgroundColor = newColors
+                                chart.update('none')
+                            }
+                        }
+                    })
+
+                    cell.addEventListener('mouseout', () => {
+                        if (chart.originalColors) {
+                            chart.data.datasets[0].backgroundColor = chart.originalColors
+                            chart.update('none')
+                        }
+                    })
+                }
+            }
         })
     }
 
@@ -365,6 +370,7 @@ class DataViewer {
         this.destroyAllCharts()
 
         // 각 컬럼에 대해 차트 생성
+        console.log(this.distributions)
         for (const column of this.columns) {
             const data = this.distributions[column]
             if (!this.isValidDistributionData(data)) continue
@@ -419,27 +425,32 @@ class DataViewer {
     }
 
     async createNumericChart(column, data, ctx) {
+        const originalColors = data.counts.map(() => 'rgba(54, 162, 235, 0.5)')
+        
         this.charts[column] = new Chart(ctx, {
             type: 'bar',
             data: {
                 labels: data.labels,
                 datasets: [{
                     data: data.counts,
-                    backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                    backgroundColor: originalColors,
                     borderColor: 'rgba(54, 162, 235, 1)',
-                    borderWidth: 1,
-                    barPercentage: 1.0,
+                    borderWidth: 0,
+                    barThickness: 15,
+                    barPercentage: 0.6,
                     categoryPercentage: 1.0
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                animation: false,
                 plugins: {
                     legend: { display: false },
                     tooltip: {
-                        enabled: false,
-                        external: this.externalTooltipHandler.bind(this),
+                        enabled: true,
+                        mode: 'index',
+                        intersect: false,
                         callbacks: {
                             label: (context) => {
                                 const value = context.raw
@@ -484,11 +495,17 @@ class DataViewer {
                         }
                     },
                     y: {
-                        display: false
+                        display: false,
+                        grid: {
+                            display: false
+                        }
                     }
                 }
             }
         })
+
+        // 차트 객체에 원본 색상 저장
+        this.charts[column].originalColors = originalColors
     }
 
     createCategoricalDisplay(column, data, container) {
@@ -503,7 +520,7 @@ class DataViewer {
             valueDiv.className = 'top-value'
             const percent = ((count / total) * 100).toFixed(1)
             valueDiv.textContent = `${label}: ${percent}%`
-            valueDiv.title = `${label}: ${count.toLocaleString()}건`
+            valueDiv.setAttribute('data-count', `${label}: ${count.toLocaleString()}건`)
             labelsDiv.appendChild(valueDiv)
         })
 
@@ -521,16 +538,27 @@ class DataViewer {
         return this.distributions[column]?.type === 'numeric'
     }
 
-    updatePagination(totalRows) {
-        this.totalRows = totalRows
-        const totalPages = Math.ceil(totalRows / this.pageSize)
-        
-        this.paginationInfo.textContent = `총 ${totalRows.toLocaleString()}건 중 ${((this.currentPage - 1) * this.pageSize + 1).toLocaleString()}~${Math.min(this.currentPage * this.pageSize, totalRows).toLocaleString()}건 표시`
-        
+    getBinIndex(value, bins) {
+        for (let i = 0; i < bins.length - 1; i++) {
+            const currentBin = parseFloat(bins[i])
+            const nextBin = parseFloat(bins[i + 1])
+            if (value >= currentBin && value < nextBin) {
+                return i
+            }
+        }
+        // 마지막 bin 체크
+        if (value >= parseFloat(bins[bins.length - 1])) {
+            return bins.length - 1
+        }
+        return -1
+    }
+
+    updatePagination() {
         this.prevButton.disabled = this.currentPage === 1
-        this.nextButton.disabled = this.currentPage >= totalPages
+        this.nextButton.disabled = this.currentPage >= this.totalPages
         
-        this.pageInfo.textContent = `${this.currentPage} / ${totalPages}`
+        this.totalRowsElement.textContent = `${this.totalRows.toLocaleString()}건`
+        this.pageInfo.textContent = `${this.currentPage} / ${this.totalPages}`
     }
 }
 

@@ -1,5 +1,7 @@
-pandas>=2.0.0
-pyarrow>=14.0.1
-fastapi>=0.104.0
-uvicorn>=0.24.0
-python-multipart>=0.0.6 
+chardet==5.2.0
+click==8.1.8
+joblib==1.5.1
+nltk==3.9.1
+psutil==7.0.0
+regex==2024.11.6
+tqdm==4.67.1
