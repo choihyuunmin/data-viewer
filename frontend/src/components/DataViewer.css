@@ -320,7 +320,6 @@ tr:hover td:hover {
 
 .query-section-inner {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 10px;
 }
@@ -330,15 +329,16 @@ tr:hover td:hover {
 }
 
 .query-input {
+  flex-grow: 1;
   width: 100%;
-  min-height: 100px;
+  height: 100px;
   padding: 10px;
-  border: 1px solid #ddd;
   border-radius: 4px;
-  font-family: monospace;
-  margin-bottom: 0;
-  box-sizing: border-box;
-  flex-basis: 100%;
+  border: 1px solid var(--color-border);
+  background-color: var(--color-background-soft);
+  color: var(--color-text);
+  font-size: 16px;
+  resize: vertical;
 }
 
 .query-input:focus {
@@ -348,6 +348,8 @@ tr:hover td:hover {
 }
 
 .execute-button {
+  flex-shrink: 0;
+  height: 100px;
   padding: 8px 16px;
   background-color: var(--color-point);
   color: var(--color-white);
@@ -365,7 +367,7 @@ tr:hover td:hover {
   margin-bottom: 10px;
   text-align: left;
   color: var(--color-text);
-  font-size: 0.9em;
+  font-size: 1.2em;
 }
 
 #chartjs-tooltip {
@@ -418,15 +420,6 @@ tr:hover td:hover {
     font-family: 'Noto Sans KR', 'Noto Sans', Inter, -apple-system, BlinkMacSystemFont,'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     --chart-grid-color: rgba(0, 0, 0, 0.1);
     --chart-border-color: rgba(0, 0, 0, 0.2);
-}
-
-.query-section-inner-info {
-    color: #666;
-    font-size: 0.9em;
-}
-
-.query-section-inner-info p {
-    margin: 0;
 }
 
 .query-controls {
