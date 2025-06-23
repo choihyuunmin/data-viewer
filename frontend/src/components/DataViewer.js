@@ -1,6 +1,13 @@
 import config from '../config/webConfig'
 import Chart from 'chart.js/auto'
 
+const getCssVar = (varName) => {
+    return getComputedStyle(document.documentElement).getPropertyValue(varName).trim()
+}
+
+const colorPonit = getCssVar('--color-point-bar');
+const colorPointHover = getCssVar('--color-hover-point');
+
 class DataViewer {
     constructor(containerId) {
         this.containerId = containerId
@@ -27,29 +34,35 @@ class DataViewer {
 
     initializeElements() {
         this.container.innerHTML = `
-            <div class="parquet-table">
+            <div class="parquet-table">          
+                <h3>Dataset Viewer</h3>
+                <div class="file-upload-area" id="fileDropZone">
+                    <p class="file-placeholder">파일을 이곳에 드롭하거나 클릭하여 파일 선택</p>
+                    <input type="file" id="fileInput" accept=".parquet" hidden />
+                    <p id="selectedFileName" class="file-name-text">선택된 파일 없음</p>
+                </div>
+
                 <div class="query-section">
-                    <textarea
-                        id="queryInput"
-                        class="query-input"
-                        placeholder="쿼리를 입력하세요"
-                    ></textarea>
-                    <div class="query-controls">
+                    <h5>쿼리를 입력하여 데이터를 확인해보세요. <span>(Ctrl + Enter로 실행가능)</span></h5>
+                    <div class="query-section-inner">
+                        <textarea
+                            id="queryInput"
+                            class="query-input"
+                            placeholder="쿼리를 입력하세요"
+                        ></textarea>
                         <button 
                             id="executeButton"
                             class="execute-button">
-                            쿼리 실행
+                            실행
                         </button>
-                        <div class="query-hint">Ctrl + Enter로 실행</div>
+                        <div class="query-section-inner-info">
+                            <p>from 절은 data 테이블로 고정되어 있습니다.</p>
+                        </div>
                     </div>
-                </div>
-
-                <div class="file-upload">
-                    <input type="file" id="fileInput" accept=".parquet" />
                 </div>
                 
                 <div id="totalRows" class="total-rows">
-                    총 0개
+                    총 0건
                 </div>
                 <div id="tableContainer" class="table-container">
                     <table>
@@ -66,7 +79,7 @@ class DataViewer {
                         이전
                     </button>
                     <span id="pageInfo" class="page-info">
-                        1 / 1 페이지
+                        1 / 1
                     </span>
                     <button 
                         id="nextButton"
@@ -88,7 +101,39 @@ class DataViewer {
         this.pageInfo = this.container.querySelector('#pageInfo')
 
         this.queryInput.value = this.query
+
+        const fileDropZone = this.container.querySelector('#fileDropZone')
+        const fileNameText = this.container.querySelector('#selectedFileName')
+
+        fileDropZone.addEventListener('click', () => this.fileInput.click())
+
+        this.fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0]
+            fileNameText.textContent = file ? `파일명 ${file.name}` : '선택된 파일 없음'
+            this.handleFileUpload(e)
+        })
+
+        fileDropZone.addEventListener('dragover', (e) => {
+            e.preventDefault()
+            fileDropZone.classList.add('dragover')
+        })
+
+        fileDropZone.addEventListener('dragleave', () => {
+            fileDropZone.classList.remove('dragover')
+        })
+
+        fileDropZone.addEventListener('drop', (e) => {
+            e.preventDefault()
+            fileDropZone.classList.remove('dragover')
+            const file = e.dataTransfer.files[0]
+            if (file) {
+                this.fileInput.files = e.dataTransfer.files
+                fileNameText.textContent = `파일명 ${file.name}`
+                this.handleFileUpload({ target: { files: [file] } })
+            }
+        })
     }
+    
 
     attachEventListeners() {
         this.queryInput.addEventListener('keypress', (e) => {
@@ -121,6 +166,18 @@ class DataViewer {
             return
         }
 
+        // 쿼리 유효성 검증
+        const query = this.queryInput.value.trim()
+        if (!query) {
+            alert('쿼리를 입력해주세요.')
+            return
+        }
+
+        if (query.length > 1000) {
+            alert('쿼리가 너무 깁니다. 1000자 이내로 입력해주세요.')
+            return
+        }
+
         this.loading = true
         this.error = null
 
@@ -131,12 +188,17 @@ class DataViewer {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
-                    query: this.queryInput.value,
+                    query: query,
                     page: this.currentPage,
                     page_size: this.pageSize,
                     file_path: this.file_path
                 })
             })
+
+            if (!response.ok) {
+                const errorData = await response.json()
+                throw new Error(errorData.detail || '쿼리 실행 중 오류가 발생했습니다.')
+            }
 
             const data = await response.json()
             console.log('Query Response:', data)
@@ -248,8 +310,8 @@ class DataViewer {
 
     async updateTable() {
         await this.updateTableHeader()
+        await this.updateCharts()
         this.updateTableBody()
-        this.updateCharts()
     }
 
     async updateTableHeader() {
@@ -264,7 +326,7 @@ class DataViewer {
             titleDiv.textContent = column
 
             if (this.sortColumn === column) {
-                titleDiv.innerHTML += `<span class="sort-icon">${this.sortDirection === 'asc' ? '↑' : '↓'}</span>`
+                titleDiv.innerHTML += `<span class="sort-icon ${this.sortDirection === 'asc' ? 'sorted-asc' : 'sorted-desc'}">${this.sortDirection === 'asc' ? '↑' : '↓'}</span>`
             }
 
             th.appendChild(titleDiv)
@@ -287,7 +349,22 @@ class DataViewer {
             this.columns.forEach(column => {
                 const td = document.createElement('td')
                 td.className = 'table-cell'
-                td.textContent = row[column]
+                let cellValue = row[column]
+
+                const isYearOrDateLike = (col) =>
+                col.includes('년도') || col.includes('년월') || col.includes('년') || col.includes('월') || col.toLowerCase().includes('year') || col.toLowerCase().includes('date')
+
+                // 숫자면 천단위 쉼표 포맷
+                if (
+                this.isNumericColumn(column) && !isNaN(cellValue) && !isYearOrDateLike(column)
+                ) {
+                td.textContent = Number(cellValue).toLocaleString()
+                td.classList.add('numeric-cell')
+                } else {
+                // XSS 방지를 위해 텍스트 이스케이프
+                td.textContent = this.escapeHtml(String(cellValue))
+                }
+
                 if (this.isNumericColumn(column)) {
                     td.dataset.value = row[column]
                     td.dataset.column = column
@@ -301,30 +378,38 @@ class DataViewer {
         this.tableBody.querySelectorAll('.table-cell').forEach(cell => {
             if (cell.dataset.value && cell.dataset.column) {
                 const column = cell.dataset.column
-                const chart = this.charts[column]
-                if (chart) {
-                    cell.addEventListener('mouseover', () => {
-                        const value = parseFloat(cell.dataset.value)
-                        const data = this.distributions[column]
-                        if (data && data.labels) {
-                            const binIndex = this.getBinIndex(value, data.labels)
-                            if (binIndex !== -1) {
-                                const newColors = chart.data.datasets[0].data.map((_, idx) =>
-                                    idx === binIndex ? 'rgba(255, 99, 132, 0.8)' : 'rgba(54, 162, 235, 0.5)'
-                                )
-                                chart.data.datasets[0].backgroundColor = newColors
-                                chart.update('none')
-                            }
-                        }
-                    })
 
-                    cell.addEventListener('mouseout', () => {
-                        if (chart.originalColors) {
-                            chart.data.datasets[0].backgroundColor = chart.originalColors
+                cell.addEventListener('mouseover', () => {
+                    const value = parseFloat(cell.dataset.value)
+                    const data = this.distributions[column]
+                    const chart = this.charts[column]
+
+                    if (!chart?.data?.datasets?.[0] || !data?.labels) return
+
+                    const binIndex = this.getBinIndex(value, data.labels)
+                    if (binIndex !== -1) {
+                        const newColors = chart.data.datasets[0].data.map((_, idx) =>
+                            idx === binIndex ? colorPointHover : colorPonit
+                        )
+                        chart.data.datasets[0].backgroundColor = newColors
+                        try {
                             chart.update('none')
+                        } catch (e) {
+                            console.warn('Chart update 실패:', e)
                         }
-                    })
-                }
+                    }
+                })
+
+                cell.addEventListener('mouseout', () => {
+                    const chart = this.charts[column]
+                    if (!chart?.originalColors) return
+                    try {
+                        chart.data.datasets[0].backgroundColor = chart.originalColors
+                        chart.update('none')
+                    } catch (e) {
+                        console.warn('Chart reset 실패:', e)
+                    }
+                })
             }
         })
     }
@@ -366,10 +451,8 @@ class DataViewer {
     }
 
     async updateCharts() {
-        // 기존 차트 제거
         this.destroyAllCharts()
 
-        // 각 컬럼에 대해 차트 생성
         console.log(this.distributions)
         for (const column of this.columns) {
             const data = this.distributions[column]
@@ -399,33 +482,43 @@ class DataViewer {
         return document.querySelector(`#distribution-${this.columns.indexOf(column)}`)
     }
 
-    async createChartForColumn(column, data, container) {
+async createChartForColumn(column, data, container) {
+    container.innerHTML = '' 
+
+    if (data.type === 'numeric') {
         const chartDiv = document.createElement('div')
         chartDiv.className = 'column-chart'
-        container.innerHTML = ''
         container.appendChild(chartDiv)
 
         const canvas = document.createElement('canvas')
+        canvas.width = 400
+        canvas.height = 200
+        canvas.style.width = '180px'
+        canvas.style.height = '80px'
         chartDiv.appendChild(canvas)
 
-        await new Promise(resolve => requestAnimationFrame(resolve))
+        await new Promise(resolve => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(resolve)
+            })
+        })
 
         const ctx = canvas.getContext('2d')
         if (!ctx) return
 
         try {
-            if (data.type === 'numeric') {
-                await this.createNumericChart(column, data, ctx)
-            } else {
-                this.createCategoricalDisplay(column, data, container)
-            }
+            await this.createNumericChart(column, data, ctx)
         } catch (error) {
             console.error(`Error creating chart for column ${column}:`, error)
         }
+    } else {
+        this.createCategoricalDisplay(column, data, container)
     }
+}
+
 
     async createNumericChart(column, data, ctx) {
-        const originalColors = data.counts.map(() => 'rgba(54, 162, 235, 0.5)')
+        const originalColors = data.counts.map(() => colorPonit)
         
         this.charts[column] = new Chart(ctx, {
             type: 'bar',
@@ -434,11 +527,13 @@ class DataViewer {
                 datasets: [{
                     data: data.counts,
                     backgroundColor: originalColors,
-                    borderColor: 'rgba(54, 162, 235, 1)',
                     borderWidth: 0,
-                    barThickness: 15,
-                    barPercentage: 0.6,
-                    categoryPercentage: 1.0
+                    hoverBackgroundColor: colorPointHover, 
+                    categoryPercentage: 1.0,
+                    barThickness: 'flex',
+                    barPercentage: 1.0,
+                    categoryPercentage: 0.8,    
+                    borderRadius: 2,
                 }]
             },
             options: {
@@ -451,6 +546,7 @@ class DataViewer {
                         enabled: true,
                         mode: 'index',
                         intersect: false,
+                        position: 'nearest',
                         callbacks: {
                             label: (context) => {
                                 const value = context.raw
@@ -458,35 +554,40 @@ class DataViewer {
                                 const percent = ((value / total) * 100).toFixed(1)
                                 return `${value.toLocaleString()}건 (${percent}%)`
                             }
-                        }
+                        },
                     }
                 },
                 scales: {
                     x: {
                         display: true,
                         ticks: {
+                            padding : 0,
                             callback: function(value, index, ticks) {
+                                const formatKMB = (val) => {
+                                    const num = Number(val)
+                                    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M'
+                                    if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K'
+                                    return num.toString() 
+                                }
+
                                 if (data.labels.length === 1) {
-                                    return data.labels[0]
+                                    return formatKMB(data.labels[0])
                                 }
+
                                 if (index === 0) {
-                                    return data.labels[0]
+                                    return formatKMB(data.labels[0])
                                 }
+
                                 if (index === data.labels.length - 1) {
-                                    return data.labels[data.labels.length - 1]
+                                    return formatKMB(data.labels[data.labels.length - 1])
                                 }
+
                                 return null
                             },
                             align: function(context) {
-                                if (data.labels.length === 1) {
-                                    return 'center'
-                                }
-                                if (context.index === 0) {
-                                    return 'start'
-                                }
-                                if (context.index === context.chart.data.labels.length - 1) {
-                                    return 'end'
-                                }
+                                if (data.labels.length === 1) return 'center'
+                                if (context.index === 0) return 'start'
+                                if (context.index === context.chart.data.labels.length - 1) return 'end'
                                 return 'center'
                             }
                         },
@@ -504,7 +605,6 @@ class DataViewer {
             }
         })
 
-        // 차트 객체에 원본 색상 저장
         this.charts[column].originalColors = originalColors
     }
 
@@ -546,7 +646,6 @@ class DataViewer {
                 return i
             }
         }
-        // 마지막 bin 체크
         if (value >= parseFloat(bins[bins.length - 1])) {
             return bins.length - 1
         }
@@ -557,8 +656,15 @@ class DataViewer {
         this.prevButton.disabled = this.currentPage === 1
         this.nextButton.disabled = this.currentPage >= this.totalPages
         
-        this.totalRowsElement.textContent = `${this.totalRows.toLocaleString()}건`
+        this.totalRowsElement.textContent = `총 ${this.totalRows.toLocaleString()}건`
         this.pageInfo.textContent = `${this.currentPage} / ${this.totalPages}`
+    }
+
+    // XSS 방지를 위한 텍스트 이스케이프 함수
+    escapeHtml(text) {
+        const div = document.createElement('div')
+        div.textContent = text
+        return div.innerHTML
     }
 }
 

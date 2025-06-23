@@ -1,36 +1,92 @@
+/* 라이트 모드 */
+:root {
+  --color-background: rgb(255, 255, 255,0.8);
+  --color-hover-background: rgba(246, 246, 246, 0.5);
+  --color-point-background: rgba(76, 175, 80, 0.1);
+  --color-text: #111;
+  --color-text-sub: #666;
+  --color-hover-text: #eee;
+  --color-border : #ededed;
+  --color-point: rgba(76, 175, 80, 1);
+  --color-point-bar: rgba(76, 175, 80, 0.3);
+  --color-hover-point: rgba(76, 175, 80,1);
+  --color-border-point: rgb(63, 148, 66);
+  --color-shadow: rgba(0, 121, 4, 0.1);
+  --color-red: rgba(225, 21, 21, 0.8);
+  --color-blue: rgba(31, 94, 255, 0.8);
+  --color-white : #fff;
+  --color-black : #000;
+}
+
+/* 다크 모드 */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background: rgba(33, 33, 33, 0.8);
+    --color-hover-background: rgba(63, 63, 63, 0.8);
+    --color-text: #eee;
+    --color-text-sub: #aaa;
+    --color-hover-text: #111;
+    --color-border : #333333;
+  }
+}
+
 .parquet-table {
   width: 100%;
+  max-width: 1450px;
   margin: 0 auto;
   padding: 20px;
   box-sizing: border-box;
-  background-color: white;
+  background-color: var(--color-background);
+  color: var(--color-text);
   border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 2px 10px var(--color-shadow);
 }
 
-.file-upload {
-  margin-bottom: 20px;
-}
 
-.file-upload input[type="file"] {
-  padding: 10px;
-  border: 2px dashed #3498db;
+.file-upload-area {
+  border: 2px dashed var(--color-border);
   border-radius: 6px;
-  width: 100%;
+  padding: 10px;
+  text-align: center;
+  background-color: var(--color-hover-background);
+  transition: border-color 0.3s ease;
   cursor: pointer;
-  transition: all 0.3s ease;
+  margin-bottom: 20px;
+  color: var(--color-text-sub);
 }
 
-.file-upload input[type="file"]:hover {
-  border-color: #2980b9;
-  background-color: #f7f9fc;
+.file-upload-area.dragover {
+  border-color: var(--color-point);
+  background-color: var(--color-point-background);
+}
+
+.file-placeholder {
+  font-size: 0.9rem;
+  margin-bottom: 0;
+}
+
+.file-name-text {
+  margin-top: 8px;
+  font-size: 0.85rem;
+}
+
+.custom-btn {
+  padding: 8px 16px;
+  background-color: var(--color-point);
+  color: var(--color-white);
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.custom-btn:hover {
+  background-color: var(--color-hover-point);
 }
 
 .table-container {
   width: 100%;
   overflow-x: auto;
   margin-bottom: 20px;
-  border: 1px solid #dee2e6;
   border-radius: 4px;
   position: relative;
   max-height: calc(100vh - 200px);
@@ -42,27 +98,19 @@ table {
   width: 100%;
   border-collapse: collapse;
   min-width: 100%;
-  border: 1px solid #e0e0e0;
+  border: 1px solid var(--color-border);
 }
 
 thead {
   position: sticky;
   top: 0;
   z-index: 10;
-  background-color: #f8f9fa;
 }
 
 th {
-  background-color: #f8f9fa;
   font-weight: 700;
-  color: #2c3e50;
-  position: relative;
-  padding-bottom: 70px;
-  text-align: center;
-  white-space: nowrap;
-  cursor: pointer;
+  color: var(--color-text);
   transition: background-color 0.2s ease;
-  border-right: 1px solid #dee2e6;
 }
 
 th::after {
@@ -72,7 +120,6 @@ th::after {
   right: 0;
   bottom: 0;
   height: 1px;
-  background-color: #e0e0e0;
   z-index: 11;
 }
 
@@ -84,40 +131,42 @@ th:last-child {
   position: relative;
   padding: 10px;
   text-align: left;
-  background-color: #f8f9fa;
-  border-bottom: 2px solid #dee2e6;
+  border-bottom: 3px solid var(--color-border);
   cursor: pointer;
-  min-width: 100px;
+  min-width: 150px;
   white-space: nowrap;
 }
 
 .column-header:hover {
-  background-color: #e9ecef;
+  background-color: var(--color-hover-background);
+  cursor: pointer;
 }
 
 .column-title {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-bottom: 5px;
+  margin-bottom: 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
 }
 
 .sort-icon {
-  font-size: 0.8em;
+  font-size: 1.1em;
 }
 
-.sorted-asc .sort-icon {
-  color: #4CAF50;
+.sorted-asc.sort-icon {
+  color: var(--color-blue);
 }
 
-.sorted-desc .sort-icon {
-  color: #f44336;
+.sorted-desc.sort-icon {
+  color: var(--color-red);
 }
 
 .table-cell {
   padding: 8px 10px;
-  border-bottom: 1px solid #dee2e6;
-  border-right: 1px solid #dee2e6;
+  border-bottom: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -129,9 +178,10 @@ th:last-child {
 }
 
 td {
-  color: #34495e;
+  color: var(--color-text);
   text-align: left;
   padding: 12px 16px;
+  font-size: 0.95em;
 }
 
 tr {
@@ -139,20 +189,30 @@ tr {
 }
 
 tr:hover {
-  background-color: #f5f9ff;
+  background-color: var(--color-hover-background);
 }
 
 tr:hover td {
-  border-color: #b3d4fc;
+  border-bottom-color: var(--color-border-point);
+}
+
+tr:hover td:hover {
+  border-bottom: 2px solid var(--color-border-point);
+  color: var(--color-point);
+}
+
+.numeric-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .distribution-container {
   height: 100px;
-  margin-top: 5px;
+  padding: 5px 10px;
   position: relative;
-  background-color: transparent;
-  border-radius: 4px;
-  overflow: hidden;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
 }
 
 .column-chart {
@@ -167,12 +227,6 @@ tr:hover td {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  padding: 8px;
-  background-color: rgba(255, 255, 255, 0.95);
   height: 100%;
   justify-content: center;
   align-items: center;
@@ -180,12 +234,11 @@ tr:hover td {
 }
 
 .top-value {
-  font-size: 0.85em;
-  color: #2c3e50;
+  font-size: 0.8em;
+  font-weight: 400;
+  color: var(--color-text);
   white-space: nowrap;
-  overflow: hidden;
   text-overflow: ellipsis;
-  padding: 4px 8px;
   position: relative;
   z-index: 1000;
   text-align: center;
@@ -200,7 +253,7 @@ tr:hover td {
   left: 50%;
   transform: translateX(-50%);
   background-color: rgba(0, 0, 0, 0.8);
-  color: white;
+  color: var(--color-white);
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 0.8em;
@@ -230,27 +283,50 @@ tr:hover td {
 
 .page-button {
   padding: 6px 12px;
-  background-color: #f8f9fa;
-  border: 1px solid #dee2e6;
+  background-color: var(--color-background);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-sub);
   border-radius: 4px;
   cursor: pointer;
 }
 
 .page-button:hover:not(:disabled) {
-  background-color: #e9ecef;
+  background-color: var(--color-hover-background);
 }
 
 .page-button:disabled {
   cursor: not-allowed;
-  opacity: 0.6;
+  opacity: 0.3;
 }
 
 .page-info {
-  color: #666;
+  color: var(--color-text);
+  font-size: 0.9rem;
 }
 
 .query-section {
   margin-bottom: 20px;
+}
+
+.query-section h5{
+  font-size: 0.9rem;
+  margin-bottom: 0.9em;
+  color: var(--color-text-sub);
+}
+
+.query-section h5 span {
+  font-weight: 400;
+}
+
+.query-section-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.query-section-inner .query-input{
+  font-size: 1rem;
 }
 
 .query-input {
@@ -260,60 +336,47 @@ tr:hover td {
   border: 1px solid #ddd;
   border-radius: 4px;
   font-family: monospace;
-  margin-bottom: 10px;
+  margin-bottom: 0;
   box-sizing: border-box;
+  flex-basis: 100%;
 }
 
 .query-input:focus {
   outline: none;
-  border-color: #2196F3;
+  border-color: var(--color-point);
   box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.1);
-}
-
-.query-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 .execute-button {
   padding: 8px 16px;
-  background-color: #4CAF50;
-  color: white;
+  background-color: var(--color-point);
+  color: var(--color-white);
   border: none;
   border-radius: 4px;
   cursor: pointer;
+  word-break: keep-all;
 }
 
 .execute-button:hover {
-  background-color: #45a049;
-}
-
-.execute-button:disabled {
-  background-color: #BDBDBD;
-  cursor: not-allowed;
-}
-
-.query-hint {
-  color: #666;
-  font-size: 0.9em;
+  background-color: var(--color-hover-point);
 }
 
 .total-rows {
   margin-bottom: 10px;
   text-align: left;
-  color: #666;
+  color: var(--color-text);
+  font-size: 0.9em;
 }
 
 #chartjs-tooltip {
   background: rgba(0, 0, 0, 0.8);
-  color: white;
+  color: var(--color-text);
   border-radius: 4px;
   padding: 8px 12px;
   font-size: 12px;
   pointer-events: none;
   z-index: 1000;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 4px var(--color-shadow);
   transition: all 0.1s ease;
 }
 
@@ -322,7 +385,7 @@ tr:hover td {
     padding: 20px;
     background-color: white;
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 2px 4px var(--color-shadow);
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
     gap: 20px;
@@ -332,19 +395,19 @@ tr:hover td {
     background-color: white;
     border-radius: 8px;
     padding: 15px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px var(--color-shadow);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
     min-height: 250px;
 }
 
 .chart-container:hover {
     transform: translateY(-2px);
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 6px var(--color-shadow);
 }
 
 .chart-container h3 {
     margin: 0 0 15px 0;
-    color: #2c3e50;
+    color: var(--color-text);
     font-size: 16px;
     font-weight: 600;
     text-align: center;
@@ -352,7 +415,20 @@ tr:hover td {
 
 /* 차트 축 스타일 */
 .chart-container canvas {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: 'Noto Sans KR', 'Noto Sans', Inter, -apple-system, BlinkMacSystemFont,'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     --chart-grid-color: rgba(0, 0, 0, 0.1);
     --chart-border-color: rgba(0, 0, 0, 0.2);
+}
+
+.query-section-inner-info {
+    color: #666;
+    font-size: 0.9em;
+}
+
+.query-section-inner-info p {
+    margin: 0;
+}
+
+.query-controls {
+  display: flex;
 }
