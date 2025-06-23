@@ -50,6 +50,9 @@ class DataViewer {
 
     initializeElements() {
         this.container.innerHTML = `
+            <div class="loading-overlay">
+                <div class="loading-spinner"></div>
+            </div>
             <div class="parquet-table">          
                 <h3>Dataset Viewer</h3>
                 <div class="query-section">
@@ -102,6 +105,7 @@ class DataViewer {
 
         this.queryInput = this.container.querySelector('#queryInput')
         this.executeButton = this.container.querySelector('#executeButton')
+        this.loadingOverlay = this.container.querySelector('.loading-overlay');
         this.totalRowsElement = this.container.querySelector('#totalRows')
         this.tableHeader = this.container.querySelector('#tableHeader')
         this.tableBody = this.container.querySelector('#tableBody')
@@ -141,7 +145,29 @@ class DataViewer {
         })
     }
 
+    showLoading() {
+        if (this.loadingOverlay) {
+            this.loadingOverlay.style.display = 'flex';
+        }
+    }
+
+    hideLoading() {
+        if (this.loadingOverlay) {
+            this.loadingOverlay.style.display = 'none';
+        }
+    }
+
+    sendHeightToParent() {
+        setTimeout(() => {
+            const height = document.body.scrollHeight;
+            if (window.parent) {
+                window.parent.postMessage({ type: 'dataViewerResize', height: height }, '*');
+            }
+        }, 200);
+    }
+
     async loadDataset(bucketName, objectName) {
+        this.showLoading();
         this.loading = true
         this.error = null
         this.currentPage = 1
@@ -173,6 +199,7 @@ class DataViewer {
                 this.bucket_name = bucketName
                 this.updateTable()
                 this.updatePagination()
+                this.sendHeightToParent()
             }
         } catch (err) {
             this.error = err.message
@@ -180,6 +207,7 @@ class DataViewer {
             this.showError(this.error)
         } finally {
             this.loading = false
+            this.hideLoading();
         }
     }
 
@@ -189,14 +217,17 @@ class DataViewer {
             return
         }
 
+        this.showLoading();
         const query = this.queryInput.value.trim()
         if (!query) {
             alert('쿼리를 입력해주세요.')
+            this.hideLoading();
             return
         }
 
         if (query.length > 1000) {
             alert('쿼리가 너무 깁니다. 1000자 이내로 입력해주세요.')
+            this.hideLoading();
             return
         }
 
@@ -233,12 +264,14 @@ class DataViewer {
                 
                 this.updateTable()
                 this.updatePagination()
+                this.sendHeightToParent()
             }
         } catch (error) {
             console.error('Query execution error:', error)
             this.showError(error.message)
         } finally {
             this.loading = false
+            this.hideLoading();
         }
     }
 
