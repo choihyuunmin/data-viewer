@@ -59,6 +59,9 @@ class DataService:
         if not self.minio_client.stat_object(bucket_name, object_name):
             raise FileNotFoundError(f"파일 '{object_name}'을 찾을 수 없습니다.")
         
+        if object_name[0] == "/":
+            object_name = object_name[1:]
+
         folder_name = object_name.split("/")[0]
         file_name = object_name.split("/")[1]
 
