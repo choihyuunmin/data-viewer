@@ -200,7 +200,8 @@ class DataService:
         return {"tableData": result_df.to_dicts()}
 
     def execute_query(self, bucket_name: str, query: str):  
-        """사용자 쿼리를 실행하고 결과 반환"""        
+        """사용자 쿼리를 실행하고 결과 반환""" 
+        query = query.replace(';', '')
         base_query = query.replace('from data', 'from df')
         total_count = self.con.execute(f"SELECT COUNT(*) FROM ({base_query}) AS sub").fetchone()[0]
         

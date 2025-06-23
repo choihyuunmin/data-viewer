@@ -53,6 +53,7 @@
 *,
 *::before,
 *::after {
+  overflow: auto !important;
   box-sizing: border-box;
   margin: 0;
   font-weight: normal;

@@ -53,7 +53,7 @@ class DataViewer {
             <div class="loading-overlay">
                 <div class="loading-spinner"></div>
             </div>
-            <div class="parquet-table">          
+            <div class="data-viewer-container">          
                 <h3>DataViewer</h3>
                 <div class="query-section">
                     <h5>쿼리를 입력하여 데이터를 확인해보세요. <span>(Ctrl + Enter로 실행가능)</span></h5>
