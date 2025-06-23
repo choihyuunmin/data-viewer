@@ -106,31 +106,70 @@ class DataService:
                 raise
 
     def _calculate_distributions(self, df: pl.DataFrame):
-        """Polars DataFrame으로 데이터 분포 계산"""
         distributions = {}
         for col in df.columns:
             dtype_str = str(df[col].dtype).lower()
+            
             if 'string' in dtype_str or 'categorical' in dtype_str or 'bool' in dtype_str:
-                value_counts = df[col].value_counts().sort("count", descending=True)
+                value_counts = df[col].drop_nulls().value_counts().sort("count", descending=True)
                 distributions[col] = {
                     'type': 'categorical',
                     'counts': value_counts["count"].to_list(),
                     'labels': value_counts[col].to_list()
                 }
+            
             elif 'int' in dtype_str or 'float' in dtype_str:
-                series = df[col].drop_nulls().to_numpy()
-                if len(series) == 0: continue
-                min_val, max_val = int(np.floor(series.min())), int(np.ceil(series.max()))
-                if min_val == max_val:
-                    counts, bin_edges = np.array([len(series)]), np.array([min_val, max_val + 1])
+                series = df[col].drop_nulls()
+                if series.is_empty(): continue
+                
+                unique_values = series.unique().sort()
+                unique_count = len(unique_values)
+                series_np = series.to_numpy()
+                counts, labels = [], []
+
+                if 1 < unique_count <= 20:
+                    diff_mean = unique_values.diff().mean()
+                    
+                    if diff_mean is None:
+                        diff = unique_values[1] - unique_values[0]
+                        bin_edges = [unique_values[0] - diff / 2, unique_values[0] + diff / 2, unique_values[1] + diff / 2]
+                    else:
+                        bin_edges = (unique_values - (diff_mean / 2)).to_list()
+                        bin_edges.append(unique_values[-1] + (diff_mean / 2))
+
+                    hist_counts, _ = np.histogram(series_np, bins=bin_edges)
+                    counts = hist_counts
+                    labels = [f"{val:.0f}" for val in unique_values]
+
+                elif unique_count == 1:
+                    counts = [len(series_np)]
+                    labels = [f"{unique_values[0]:.0f}"]
+
                 else:
-                    bin_edges = np.unique(np.round(np.linspace(min_val, max_val, num=20)).astype(int))
-                    counts, _ = np.histogram(series, bins=bin_edges)
+                    n = len(series_np)
+                    if n < 2: continue
+
+                    min_val, max_val = series_np.min(), series_np.max()
+
+                    q1 = np.quantile(series_np, 0.25)
+                    q3 = np.quantile(series_np, 0.75)
+                    iqr = q3 - q1
+                    
+                    if iqr > 0:
+                        bin_width = 2 * iqr * (n ** (-1/3))
+                        num_bins = min(20, int(np.ceil((max_val - min_val) / bin_width))) if bin_width > 0 else 20
+                    else:
+                        num_bins = 20
+
+                    num_bins = max(2, num_bins)
+                    hist_counts, hist_edges = np.histogram(series_np, bins=num_bins)
+                    counts = hist_counts
+                    labels = [f"{edge:.0f}" for edge in hist_edges[:-1]]
                 
                 distributions[col] = {
                     'type': 'numeric',
-                    'counts': counts.tolist(),
-                    'labels': [str(b) for b in bin_edges[:-1]]
+                    'counts': counts if isinstance(counts, list) else counts.tolist(),
+                    'labels': labels
                 }
         return distributions
 

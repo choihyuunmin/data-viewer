@@ -269,7 +269,6 @@ class DataViewer {
             })
 
             const data = await response.json()
-            console.log(data)
             this.tableData = data.tableData
             this.updateTableBody()
             this.updatePagination()

@@ -1,13 +1,20 @@
 <script>
 export default {
-  name: 'App'
+  name: 'App',
+  computed: {
+    iframeSrc() {
+      const baseUrl = '/src/components/DataViewer.html';
+      const searchParams = window.location.search;
+      return `${baseUrl}${searchParams}`;
+    }
+  }
 }
 </script>
 
 <template>
   <div id="app">
     <iframe
-      src="/src/components/DataViewer.html"
+      :src="iframeSrc"
       frameborder="0"
       style="width: 100%; height: 100%; border: none;"
     ></iframe>
