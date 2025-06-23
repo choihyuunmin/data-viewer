@@ -51,27 +51,24 @@ class DataService:
         except Exception as e:
             raise RuntimeError(f"Pre-signed URL 생성 중 오류 발생: {e}") from e
 
-    def _get_or_load_dataframe(self, bucket_name: str, file_name: str, folder: str = "UPLOAD") -> pl.DataFrame:
+    def _get_or_load_dataframe(self, bucket_name: str, file_name: str) -> pl.DataFrame:
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 초기화되지 않았습니다.")
         if not self.minio_client.bucket_exists(bucket_name):
             raise FileNotFoundError(f"MinIO 버킷 '{bucket_name}'을 찾을 수 없습니다.")
-        if not self.minio_client.stat_object(bucket_name, f"{folder}/{file_name}"):
+        if not self.minio_client.stat_object(bucket_name, file_name):
             raise FileNotFoundError(f"파일 '{file_name}'을 찾을 수 없습니다.")
         
         base_name, ext = os.path.splitext(file_name)
-        ext = ext.lower().lstrip(".")
+        ext = ext.lower().lstrip(".")           
         parquet_name = f"{base_name}.parquet"
 
-        original_path = f"{folder}/{file_name}"
-        parquet_path = f"{folder}/{parquet_name}"
-
         try:
-            objects = self.minio_client.list_objects(bucket_name, prefix=parquet_path, recursive=True)
-            parquet_exists = any(obj.object_name == parquet_path for obj in objects)
+            objects = self.minio_client.list_objects(bucket_name, prefix=parquet_name, recursive=True)
+            parquet_exists = any(obj.object_name == parquet_name for obj in objects)
 
             if not parquet_exists:
-                self._create_presigned_url(bucket_name, original_path)
+                self._create_presigned_url(bucket_name, file_name)
                 response = requests.get(self.url)
                 buffer = io.BytesIO(response.content)
 
@@ -88,13 +85,13 @@ class DataService:
 
                 self.minio_client.put_object(
                     bucket_name,
-                    parquet_path,
+                    parquet_name,
                     data=parquet_buffer,
                     length=len(parquet_buffer.getvalue()),
                     content_type="application/octet-stream"
                 )
 
-            self._create_presigned_url(bucket_name, parquet_path)
+            self._create_presigned_url(bucket_name, parquet_name)
 
             df = self.con.execute(f"SELECT * FROM read_parquet('{self.url}')").pl()
             self.con.register("df", df)
