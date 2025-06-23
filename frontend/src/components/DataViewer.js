@@ -21,27 +21,37 @@ class DataViewer {
         this.columns = []
         this.distributions = []
         this.tableData = []
-        this.file_path = null
+        this.dataset_name = null
         this.charts = {}
         this.pageSize = 10
         this.currentPage = 1
         this.totalRows = 0
         this.totalPages = 0
+        this.sortColumn = null
+        this.sortDirection = null
+        this.bucket_name = null;
+        this.file_name = null;
 
         this.initializeElements()
         this.attachEventListeners()
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const bucketName = urlParams.get('bucket');
+        const fileName = urlParams.get('file');
+
+        if (bucketName && fileName) {
+            this.bucket_name = bucketName;
+            this.file_name = fileName;
+            this.loadDataset(this.bucket_name, this.file_name);
+        } else {
+            this.showError("URL에 'bucket' 및 'file' 파라미터가 필요합니다. 예: ?bucket=my-bucket&file=data.csv");
+        }
     }
 
     initializeElements() {
         this.container.innerHTML = `
             <div class="parquet-table">          
                 <h3>Dataset Viewer</h3>
-                <div class="file-upload-area" id="fileDropZone">
-                    <p class="file-placeholder">파일을 이곳에 드롭하거나 클릭하여 파일 선택</p>
-                    <input type="file" id="fileInput" accept=".parquet" hidden />
-                    <p id="selectedFileName" class="file-name-text">선택된 파일 없음</p>
-                </div>
-
                 <div class="query-section">
                     <h5>쿼리를 입력하여 데이터를 확인해보세요. <span>(Ctrl + Enter로 실행가능)</span></h5>
                     <div class="query-section-inner">
@@ -92,7 +102,6 @@ class DataViewer {
 
         this.queryInput = this.container.querySelector('#queryInput')
         this.executeButton = this.container.querySelector('#executeButton')
-        this.fileInput = this.container.querySelector('#fileInput')
         this.totalRowsElement = this.container.querySelector('#totalRows')
         this.tableHeader = this.container.querySelector('#tableHeader')
         this.tableBody = this.container.querySelector('#tableBody')
@@ -101,50 +110,22 @@ class DataViewer {
         this.pageInfo = this.container.querySelector('#pageInfo')
 
         this.queryInput.value = this.query
-
-        const fileDropZone = this.container.querySelector('#fileDropZone')
-        const fileNameText = this.container.querySelector('#selectedFileName')
-
-        fileDropZone.addEventListener('click', () => this.fileInput.click())
-
-        this.fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0]
-            fileNameText.textContent = file ? `파일명 ${file.name}` : '선택된 파일 없음'
-            this.handleFileUpload(e)
-        })
-
-        fileDropZone.addEventListener('dragover', (e) => {
-            e.preventDefault()
-            fileDropZone.classList.add('dragover')
-        })
-
-        fileDropZone.addEventListener('dragleave', () => {
-            fileDropZone.classList.remove('dragover')
-        })
-
-        fileDropZone.addEventListener('drop', (e) => {
-            e.preventDefault()
-            fileDropZone.classList.remove('dragover')
-            const file = e.dataTransfer.files[0]
-            if (file) {
-                this.fileInput.files = e.dataTransfer.files
-                fileNameText.textContent = `파일명 ${file.name}`
-                this.handleFileUpload({ target: { files: [file] } })
-            }
-        })
     }
     
 
     attachEventListeners() {
-        this.queryInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                this.currentPage = 1
-                this.executeQuery()
+        this.queryInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                this.currentPage = 1;
+                this.executeQuery();
             }
-        })
+        });
 
-        this.executeButton.addEventListener('click', () => this.executeQuery())
-        this.fileInput.addEventListener('change', (e) => this.handleFileUpload(e))
+        this.executeButton.addEventListener('click', () => {
+            this.currentPage = 1;
+            this.executeQuery();
+        });
 
         this.prevButton.addEventListener('click', () => {
             if (this.currentPage > 1) {
@@ -160,13 +141,55 @@ class DataViewer {
         })
     }
 
+    async loadDataset(bucketName, fileName) {
+        this.loading = true
+        this.error = null
+        this.currentPage = 1
+        this.sortColumn = null
+        this.sortDirection = null
+
+        try {
+            const response = await fetch(`${config.api.baseUrl}/dataviewer/load_dataset`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bucket_name: bucketName,
+                    file_name: fileName
+                })
+            })
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || '데이터셋 로딩 실패');
+            }
+
+            const data = await response.json()
+            if (data.columns && data.tableData) {
+                this.columns = data.columns
+                this.tableData = data.tableData
+                this.distributions = data.distributions
+                this.totalRows = data.total
+                this.totalPages = Math.ceil(this.totalRows / this.pageSize)
+                this.bucket_name = bucketName
+                this.file_name = fileName
+                this.updateTable()
+                this.updatePagination()
+            }
+        } catch (err) {
+            this.error = err.message
+            console.error(this.error)
+            this.showError(this.error)
+        } finally {
+            this.loading = false
+        }
+    }
+
     async executeQuery() {
-        if (!this.file_path) {
-            alert('파일을 먼저 업로드해주세요.')
+        if (!this.bucket_name || !this.file_name) {
+            this.showError('데이터셋이 로드되지 않았습니다.')
             return
         }
 
-        // 쿼리 유효성 검증
         const query = this.queryInput.value.trim()
         if (!query) {
             alert('쿼리를 입력해주세요.')
@@ -182,16 +205,17 @@ class DataViewer {
         this.error = null
 
         try {
-            const response = await fetch(`${config.api.baseUrl}/query`, {
+            const response = await fetch(`${config.api.baseUrl}/dataviewer/query`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     query: query,
+                    bucket_name: this.bucket_name,
+                    file_name: this.file_name,
                     page: this.currentPage,
                     page_size: this.pageSize,
-                    file_path: this.file_path
                 })
             })
 
@@ -201,7 +225,6 @@ class DataViewer {
             }
 
             const data = await response.json()
-            console.log('Query Response:', data)
             
             if (data.tableData) {
                 this.tableData = data.tableData
@@ -210,28 +233,20 @@ class DataViewer {
                 this.distributions = data.distributions
                 this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 
-                console.log('Updated State:', {
-                    totalRows: this.totalRows,
-                    totalPages: this.totalPages,
-                    currentPage: this.currentPage,
-                    pageSize: this.pageSize
-                })
-                
                 this.updateTable()
                 this.updatePagination()
             }
         } catch (error) {
             console.error('Query execution error:', error)
-            this.error = error.message
-            alert(this.error)
+            this.showError(error.message)
         } finally {
             this.loading = false
         }
     }
 
     async changePage(page) {
-        if (!this.file_path) {
-            alert('파일을 먼저 업로드해주세요.')
+        if (!this.bucket_name || !this.file_name) {
+            this.showError('데이터셋이 로드되지 않았습니다.')
             return
         }
 
@@ -239,82 +254,40 @@ class DataViewer {
         this.error = null
 
         try {
-            const response = await fetch(`${config.api.baseUrl}/page`, {
+            const response = await fetch(`${config.api.baseUrl}/dataviewer/page`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     query: this.queryInput.value,
+                    bucket_name: this.bucket_name,
+                    file_name: this.file_name,
                     page: page,
                     page_size: this.pageSize,
-                    file_path: this.file_path
                 })
             })
 
             const data = await response.json()
-            
+            console.log(data)
             this.tableData = data.tableData
             this.updateTableBody()
             this.updatePagination()
         } catch (error) {
             console.error('Page change error:', error)
-            this.error = error.message
-            alert(this.error)
-        } finally {
-            this.loading = false
-        }
-    }
-
-    async handleFileUpload(event) {
-        const file = event.target.files[0]
-        if (!file) return
-
-        this.loading = true
-        this.error = null
-        this.currentPage = 1
-        this.sortColumn = null
-        this.sortDirection = null
-
-        try {
-            const formData = new FormData()
-            formData.append('file', file)
-
-            const response = await fetch(`${config.api.baseUrl}/init`, {
-                method: 'POST',
-                body: formData
-            })
-
-            if (!response.ok) {
-                throw new Error('파일 업로드 중 오류가 발생했습니다.')
-            }
-
-            const data = await response.json()
-            if (data.columns && data.tableData) {
-                this.columns = data.columns
-                this.tableData = data.tableData
-                this.distributions = data.distributions
-                this.totalRows = data.total
-                this.totalPages = Math.ceil(this.totalRows / this.pageSize)
-                this.file_path = data.file_path
-                this.updateTable()
-                this.updatePagination()
-            }
-        } catch (err) {
-            this.error = err.message
-            console.error(this.error)
+            this.showError(error.message)
         } finally {
             this.loading = false
         }
     }
 
     async updateTable() {
-        await this.updateTableHeader()
-        await this.updateCharts()
+        this.updateTableHeader()
         this.updateTableBody()
+        this.updateCharts()
     }
 
-    async updateTableHeader() {
+    updateTableHeader() {
         this.tableHeader.innerHTML = ''
         this.columns.forEach(column => {
             const th = document.createElement('th')
@@ -343,7 +316,7 @@ class DataViewer {
     updateTableBody() {
         this.tableBody.innerHTML = ''
         const sortedData = this.getSortedData()
-        
+
         sortedData.forEach(row => {
             const tr = document.createElement('tr')
             this.columns.forEach(column => {
@@ -354,15 +327,13 @@ class DataViewer {
                 const isYearOrDateLike = (col) =>
                 col.includes('년도') || col.includes('년월') || col.includes('년') || col.includes('월') || col.toLowerCase().includes('year') || col.toLowerCase().includes('date')
 
-                // 숫자면 천단위 쉼표 포맷
                 if (
                 this.isNumericColumn(column) && !isNaN(cellValue) && !isYearOrDateLike(column)
                 ) {
                 td.textContent = Number(cellValue).toLocaleString()
                 td.classList.add('numeric-cell')
                 } else {
-                // XSS 방지를 위해 텍스트 이스케이프
-                td.textContent = this.escapeHtml(String(cellValue))
+                td.textContent = this.escapeHtml(String(cellValue ?? ''))
                 }
 
                 if (this.isNumericColumn(column)) {
@@ -374,7 +345,6 @@ class DataViewer {
             this.tableBody.appendChild(tr)
         })
 
-        // 테이블 셀에 이벤트 리스너 추가
         this.tableBody.querySelectorAll('.table-cell').forEach(cell => {
             if (cell.dataset.value && cell.dataset.column) {
                 const column = cell.dataset.column
@@ -453,7 +423,6 @@ class DataViewer {
     async updateCharts() {
         this.destroyAllCharts()
 
-        console.log(this.distributions)
         for (const column of this.columns) {
             const data = this.distributions[column]
             if (!this.isValidDistributionData(data)) continue
@@ -482,39 +451,39 @@ class DataViewer {
         return document.querySelector(`#distribution-${this.columns.indexOf(column)}`)
     }
 
-async createChartForColumn(column, data, container) {
-    container.innerHTML = '' 
+    async createChartForColumn(column, data, container) {
+        container.innerHTML = '' 
 
-    if (data.type === 'numeric') {
-        const chartDiv = document.createElement('div')
-        chartDiv.className = 'column-chart'
-        container.appendChild(chartDiv)
+        if (data.type === 'numeric') {
+            const chartDiv = document.createElement('div')
+            chartDiv.className = 'column-chart'
+            container.appendChild(chartDiv)
 
-        const canvas = document.createElement('canvas')
-        canvas.width = 400
-        canvas.height = 200
-        canvas.style.width = '180px'
-        canvas.style.height = '80px'
-        chartDiv.appendChild(canvas)
+            const canvas = document.createElement('canvas')
+            canvas.width = 400
+            canvas.height = 200
+            canvas.style.width = '180px'
+            canvas.style.height = '80px'
+            chartDiv.appendChild(canvas)
 
-        await new Promise(resolve => {
-            requestAnimationFrame(() => {
-                requestAnimationFrame(resolve)
+            await new Promise(resolve => {
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(resolve)
+                })
             })
-        })
 
-        const ctx = canvas.getContext('2d')
-        if (!ctx) return
+            const ctx = canvas.getContext('2d')
+            if (!ctx) return
 
-        try {
-            await this.createNumericChart(column, data, ctx)
-        } catch (error) {
-            console.error(`Error creating chart for column ${column}:`, error)
+            try {
+                await this.createNumericChart(column, data, ctx)
+            } catch (error) {
+                console.error(`Error creating chart for column ${column}:`, error)
+            }
+        } else {
+            this.createCategoricalDisplay(column, data, container)
         }
-    } else {
-        this.createCategoricalDisplay(column, data, container)
     }
-}
 
 
     async createNumericChart(column, data, ctx) {
@@ -658,13 +627,18 @@ async createChartForColumn(column, data, container) {
         
         this.totalRowsElement.textContent = `총 ${this.totalRows.toLocaleString()}건`
         this.pageInfo.textContent = `${this.currentPage} / ${this.totalPages}`
+        this.prevButton.disabled = this.currentPage <= 1
+        this.nextButton.disabled = this.currentPage >= this.totalPages
     }
 
-    // XSS 방지를 위한 텍스트 이스케이프 함수
     escapeHtml(text) {
         const div = document.createElement('div')
         div.textContent = text
         return div.innerHTML
+    }
+
+    showError(message) {
+        this.container.innerHTML = `<div class="error-message">${message}</div>`;
     }
 }
 
