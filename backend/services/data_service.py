@@ -51,24 +51,27 @@ class DataService:
         except Exception as e:
             raise RuntimeError(f"Pre-signed URL 생성 중 오류 발생: {e}") from e
 
-    def _get_or_load_dataframe(self, bucket_name: str, file_name: str) -> pl.DataFrame:
+    def _get_or_load_dataframe(self, bucket_name: str, file_path: str) -> pl.DataFrame:
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 초기화되지 않았습니다.")
         if not self.minio_client.bucket_exists(bucket_name):
             raise FileNotFoundError(f"MinIO 버킷 '{bucket_name}'을 찾을 수 없습니다.")
-        if not self.minio_client.stat_object(bucket_name, file_name):
-            raise FileNotFoundError(f"파일 '{file_name}'을 찾을 수 없습니다.")
+        if not self.minio_client.stat_object(bucket_name, file_path):
+            raise FileNotFoundError(f"파일 '{file_path}'을 찾을 수 없습니다.")
         
+        folder_name = file_path.split("/")[0]
+        file_name = file_path.split("/")[1]
+
         base_name, ext = os.path.splitext(file_name)
         ext = ext.lower().lstrip(".")           
-        parquet_name = f"{base_name}.parquet"
+        parquet_name = f"{folder_name}/{base_name}.parquet"
 
         try:
             objects = self.minio_client.list_objects(bucket_name, prefix=parquet_name, recursive=True)
             parquet_exists = any(obj.object_name == parquet_name for obj in objects)
 
             if not parquet_exists:
-                self._create_presigned_url(bucket_name, file_name)
+                self._create_presigned_url(bucket_name, file_path)
                 response = requests.get(self.url)
                 buffer = io.BytesIO(response.content)
 
@@ -99,7 +102,7 @@ class DataService:
 
         except S3Error as exc:
             if exc.code == 'NoSuchKey':
-                raise FileNotFoundError(f"파일 '{file_name}' 또는 Parquet 버전을 찾을 수 없습니다.")
+                raise FileNotFoundError(f"파일 '{file_path}' 또는 Parquet 버전을 찾을 수 없습니다.")
             else:
                 raise
 
