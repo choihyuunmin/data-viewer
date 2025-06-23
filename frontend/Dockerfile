@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # npm ci를 사용하여 의존성을 설치합니다. (더 빠르고 안정적입니다)
-RUN npm ci
+RUN npm install
 
 # 나머지 소스 코드를 복사합니다.
 COPY . .

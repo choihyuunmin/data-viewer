@@ -8,8 +8,9 @@ import duckdb
 import numpy as np
 from minio import Minio
 from minio.error import S3Error
+import re
 
-from config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY
+from config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, DANGEROUS_KEYWORDS
 
 class DataService:
     def __init__(self):
@@ -189,6 +190,10 @@ class DataService:
         }
 
     def get_paged_data(self, bucket_name: str, file_name: str, query: str, page: int, page_size: int):
+        lower_query = query.lower()
+        if any(keyword in lower_query for keyword in DANGEROUS_KEYWORDS):
+            raise ValueError("위험한 쿼리입니다.")
+
         base_query = query.replace('from data', f'from df')
         offset = (page - 1) * page_size
         paged_query = f"{base_query} LIMIT {page_size} OFFSET {offset}"
@@ -198,6 +203,10 @@ class DataService:
 
     def execute_query(self, bucket_name: str, file_name: str, query: str):
         """사용자 쿼리를 실행하고 결과 반환"""        
+        lower_query = query.lower()
+        if any(keyword in lower_query for keyword in DANGEROUS_KEYWORDS):
+            raise ValueError("위험한 쿼리입니다.")
+        
         base_query = query.replace('from data', 'from df')
         total_count = self.con.execute(f"SELECT COUNT(*) FROM ({base_query}) AS sub").fetchone()[0]
         

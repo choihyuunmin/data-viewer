@@ -1,24 +1,15 @@
-<script>
-export default {
-  name: 'App',
-  computed: {
-    iframeSrc() {
-      const baseUrl = '/src/components/DataViewer.html';
-      const searchParams = window.location.search;
-      return `${baseUrl}${searchParams}`;
-    }
-  }
-}
+<script setup>
+import { onMounted } from 'vue'
+import DataViewer from './components/DataViewer.js'
+import './components/DataViewer.css'
+
+onMounted(() => {
+  new DataViewer('data-viewer-container')
+})
 </script>
 
 <template>
-  <div id="app">
-    <iframe
-      :src="iframeSrc"
-      frameborder="0"
-      style="width: 100%; height: 100%; border: none;"
-    ></iframe>
-  </div>
+  <div id="data-viewer-container"></div>
 </template>
 
 <style>
