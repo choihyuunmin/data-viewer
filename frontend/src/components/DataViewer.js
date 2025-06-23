@@ -30,19 +30,19 @@ class DataViewer {
         this.sortColumn = null
         this.sortDirection = null
         this.bucket_name = null;
-        this.file_name = null;
+        this.object_name = null;
 
         this.initializeElements()
         this.attachEventListeners()
 
         const urlParams = new URLSearchParams(window.location.search);
         const bucketName = urlParams.get('bucket');
-        const fileName = urlParams.get('file');
+        const objectName = urlParams.get('file');
 
-        if (bucketName && fileName) {
+        if (bucketName && objectName) {
             this.bucket_name = bucketName;
-            this.file_name = fileName;
-            this.loadDataset(this.bucket_name, this.file_name);
+            this.object_name = objectName;
+            this.loadDataset(this.bucket_name, this.object_name);
         } else {
             this.showError("URL에 'bucket' 및 'file' 파라미터가 필요합니다. 예: ?bucket=my-bucket&file=data.csv");
         }
@@ -141,7 +141,7 @@ class DataViewer {
         })
     }
 
-    async loadDataset(bucketName, fileName) {
+    async loadDataset(bucketName, objectName) {
         this.loading = true
         this.error = null
         this.currentPage = 1
@@ -154,7 +154,7 @@ class DataViewer {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     bucket_name: bucketName,
-                    file_name: fileName
+                    object_name: objectName
                 })
             })
 
@@ -171,7 +171,6 @@ class DataViewer {
                 this.totalRows = data.total
                 this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 this.bucket_name = bucketName
-                this.file_name = fileName
                 this.updateTable()
                 this.updatePagination()
             }
@@ -185,7 +184,7 @@ class DataViewer {
     }
 
     async executeQuery() {
-        if (!this.bucket_name || !this.file_name) {
+        if (!this.bucket_name) {
             this.showError('데이터셋이 로드되지 않았습니다.')
             return
         }
@@ -213,7 +212,6 @@ class DataViewer {
                 body: JSON.stringify({
                     query: query,
                     bucket_name: this.bucket_name,
-                    file_name: this.file_name,
                     page: this.currentPage,
                     page_size: this.pageSize,
                 })
@@ -245,7 +243,7 @@ class DataViewer {
     }
 
     async changePage(page) {
-        if (!this.bucket_name || !this.file_name) {
+        if (!this.bucket_name) {
             this.showError('데이터셋이 로드되지 않았습니다.')
             return
         }
@@ -262,7 +260,6 @@ class DataViewer {
                 body: JSON.stringify({
                     query: this.queryInput.value,
                     bucket_name: this.bucket_name,
-                    file_name: this.file_name,
                     page: page,
                     page_size: this.pageSize,
                 })

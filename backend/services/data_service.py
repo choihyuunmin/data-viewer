@@ -51,16 +51,16 @@ class DataService:
         except Exception as e:
             raise RuntimeError(f"Pre-signed URL 생성 중 오류 발생: {e}") from e
 
-    def _get_or_load_dataframe(self, bucket_name: str, file_path: str) -> pl.DataFrame:
+    def _get_or_load_dataframe(self, bucket_name: str, object_name: str) -> pl.DataFrame:
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 초기화되지 않았습니다.")
         if not self.minio_client.bucket_exists(bucket_name):
             raise FileNotFoundError(f"MinIO 버킷 '{bucket_name}'을 찾을 수 없습니다.")
-        if not self.minio_client.stat_object(bucket_name, file_path):
-            raise FileNotFoundError(f"파일 '{file_path}'을 찾을 수 없습니다.")
+        if not self.minio_client.stat_object(bucket_name, object_name):
+            raise FileNotFoundError(f"파일 '{object_name}'을 찾을 수 없습니다.")
         
-        folder_name = file_path.split("/")[0]
-        file_name = file_path.split("/")[1]
+        folder_name = object_name.split("/")[0]
+        file_name = object_name.split("/")[1]
 
         base_name, ext = os.path.splitext(file_name)
         ext = ext.lower().lstrip(".")           
@@ -71,7 +71,7 @@ class DataService:
             parquet_exists = any(obj.object_name == parquet_name for obj in objects)
 
             if not parquet_exists:
-                self._create_presigned_url(bucket_name, file_path)
+                self._create_presigned_url(bucket_name, object_name)
                 response = requests.get(self.url)
                 buffer = io.BytesIO(response.content)
 
@@ -102,7 +102,7 @@ class DataService:
 
         except S3Error as exc:
             if exc.code == 'NoSuchKey':
-                raise FileNotFoundError(f"파일 '{file_path}' 또는 Parquet 버전을 찾을 수 없습니다.")
+                raise FileNotFoundError(f"파일 '{object_name}' 또는 Parquet 버전을 찾을 수 없습니다.")
             else:
                 raise
 
@@ -174,26 +174,21 @@ class DataService:
                 }
         return distributions
 
-    def get_dataset_details(self, bucket_name: str, file_name: str):
+    def get_dataset_details(self, bucket_name: str, object_name: str):
         """데이터셋의 초기 정보 반환"""
-        df = self._get_or_load_dataframe(bucket_name, file_name)
+        df = self._get_or_load_dataframe(bucket_name, object_name)
         preview = self.con.execute(f"SELECT * FROM df LIMIT 10").pl()
         
         distributions = self._calculate_distributions(df)
         return {
             "bucket_name": bucket_name,
-            "file_name": file_name,
             "columns": df.columns,
             "tableData": preview.to_dicts(),
             "distributions": distributions,
             "total": len(df)
         }
 
-    def get_paged_data(self, bucket_name: str, file_name: str, query: str, page: int, page_size: int):
-        lower_query = query.lower()
-        if any(keyword in lower_query for keyword in DANGEROUS_KEYWORDS):
-            raise ValueError("위험한 쿼리입니다.")
-
+    def get_paged_data(self, bucket_name: str, query: str, page: int, page_size: int):
         base_query = query.replace('from data', f'from df')
         offset = (page - 1) * page_size
         paged_query = f"{base_query} LIMIT {page_size} OFFSET {offset}"
@@ -201,12 +196,8 @@ class DataService:
         result_df = self.con.execute(paged_query).pl()
         return {"tableData": result_df.to_dicts()}
 
-    def execute_query(self, bucket_name: str, file_name: str, query: str):
+    def execute_query(self, bucket_name: str, query: str):  
         """사용자 쿼리를 실행하고 결과 반환"""        
-        lower_query = query.lower()
-        if any(keyword in lower_query for keyword in DANGEROUS_KEYWORDS):
-            raise ValueError("위험한 쿼리입니다.")
-        
         base_query = query.replace('from data', 'from df')
         total_count = self.con.execute(f"SELECT COUNT(*) FROM ({base_query}) AS sub").fetchone()[0]
         

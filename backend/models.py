@@ -4,12 +4,11 @@ from config import MAX_QUERY_LENGTH, DANGEROUS_KEYWORDS
 
 class LoadDatasetRequest(BaseModel):
     bucket_name: str
-    file_name: str
+    object_name: str
 
 class QueryRequest(BaseModel):
     query: str
     bucket_name: str
-    file_name: str
     page: int
     page_size: int
 
