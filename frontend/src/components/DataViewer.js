@@ -56,20 +56,25 @@ class DataViewer {
             <div class="data-viewer-container">          
                 <h3>DataViewer</h3>
                 <div class="query-section">
-                    <h5>쿼리를 입력하여 데이터를 확인해보세요. <span>(Ctrl + Enter로 실행가능)</span></h5>
-                    <div class="query-section-inner">
-                        <textarea
-                            id="queryInput"
-                            class="query-input"
-                            placeholder="쿼리를 입력하세요"
-                        ></textarea>
-                        <button 
-                            id="executeButton"
-                            class="execute-button">
-                            실행
-                        </button>
+                    <button id="toggleQueryButton" class="execute-button small-toggle">쿼리 실행</button>
+                    <div class="query-input-wrapper" style="display: none;">
+                        <div class="query-guide">
+                            쿼리를 입력하여 데이터를 확인해보세요. <span>(Ctrl + Enter로 실행가능)</span>
+                        </div>
+                        <div class="query-section-inner">
+                            <textarea
+                                id="queryInput"
+                                class="query-input"
+                                placeholder="쿼리를 입력하세요"
+                            ></textarea>
+                            <button 
+                                id="executeButton"
+                                class="execute-button">
+                                실행
+                            </button>
+                        </div>
+                        <div class="from-desc">from 절은 data 테이블로 고정되어 있습니다.</div>
                     </div>
-                    <h5>from 절은 data 테이블로 고정되어 있습니다.</h5>
                 </div>
                 
                 <div id="totalRows" class="total-rows">
@@ -110,8 +115,19 @@ class DataViewer {
         this.prevButton = this.container.querySelector('#prevButton')
         this.nextButton = this.container.querySelector('#nextButton')
         this.pageInfo = this.container.querySelector('#pageInfo')
+        this.toggleQueryButton = this.container.querySelector('#toggleQueryButton');
+        this.queryInputWrapper = this.container.querySelector('.query-input-wrapper');
 
         this.queryInput.value = this.query
+
+        this.toggleQueryButton.addEventListener('click', () => {
+            if (this.queryInputWrapper.style.display === 'none') {
+                this.queryInputWrapper.style.display = 'block';
+                this.queryInput.focus();
+            } else {
+                this.queryInputWrapper.style.display = 'none';
+            }
+        });
     }
     
 

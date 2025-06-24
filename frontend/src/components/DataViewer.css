@@ -32,7 +32,7 @@
 
 .data-viewer-container {
   width: 100%;
-  max-width: 1450px;
+  max-width: 1650px;
   margin: 0 auto;
   padding: 20px;
   box-sizing: border-box;
@@ -363,6 +363,24 @@ tr:hover td:hover {
   background-color: var(--color-hover-point);
 }
 
+.execute-button.wide-thin {
+    width: 220px;
+    min-width: 120px;
+    max-width: 300px;
+    height: 28px;
+    font-size: 0.95em;
+    font-weight: 500;
+    margin: 0 0 0 0;
+    text-align: left;
+}
+
+.from-desc {
+    margin-top: 6px;
+    color: var(--color-text-sub);
+    font-size: 0.92em;
+    text-align: left;
+}
+
 .total-rows {
   margin-bottom: 10px;
   text-align: left;
@@ -451,4 +469,20 @@ tr:hover td:hover {
 @keyframes spin {
     0% { transform: rotate(0deg); }
     100% { transform: rotate(360deg); }
+}
+
+.execute-button.small-toggle {
+    width: 80px;
+    height: 20px;
+    font-size: 0.78em;
+    padding: 0 4px;
+    margin-bottom: 4px;
+    border-radius: 3px;
+    background-color: var(--color-point);
+    color: #fff;
+    border: none;
+    cursor: pointer;
+    text-align: center;
+    font-weight: 500;
+    line-height: 1;
 }
