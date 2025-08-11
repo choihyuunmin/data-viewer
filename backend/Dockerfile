@@ -16,5 +16,12 @@ COPY . .
 # 앱이 실행될 포트를 노출합니다.
 EXPOSE 8000
 
-# uvicorn을 사용하여 애플리케이션을 실행합니다.
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+# 애플리케이션 실행 환경 변수
+ENV LOG_FILE_PATH=./app.log
+ENV LOG_LEVEL=INFO
+
+# 로그 디렉터리 생성
+RUN mkdir -p /DATA/data-viewer/log
+
+# 앱을 애플리케이션 내부 진입점으로 실행 (내부에서 log_config를 주입)
+CMD ["python", "main.py"]

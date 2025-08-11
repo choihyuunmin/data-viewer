@@ -30,19 +30,19 @@ class DataViewer {
         this.sortColumn = null
         this.sortDirection = null
         this.bucket_name = null;
-        this.object_name = null;
+        this.file_name = null;
 
         this.initializeElements()
         this.attachEventListeners()
 
         const urlParams = new URLSearchParams(window.location.search);
         const bucketName = urlParams.get('bucket');
-        const objectName = urlParams.get('file');
+        const fileName = urlParams.get('file');
 
-        if (bucketName && objectName) {
+        if (bucketName && fileName) {
             this.bucket_name = bucketName;
-            this.object_name = objectName;
-            this.loadDataset(this.bucket_name, this.object_name);
+            this.file_name = fileName;
+            this.loadDataset(this.bucket_name, this.file_name);
         } else {
             this.showError("URL에 'bucket' 및 'file' 파라미터가 필요합니다. 예: ?bucket=my-bucket&file=data.csv");
         }
@@ -180,7 +180,7 @@ class DataViewer {
         }, 200);
     }
 
-    async loadDataset(bucketName, objectName) {
+    async loadDataset(bucketName, fileName) {
         this.showLoading();
         this.loading = true
         this.error = null
@@ -194,7 +194,7 @@ class DataViewer {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     bucket_name: bucketName,
-                    object_name: objectName
+                    file_name: fileName
                 })
             })
 

@@ -1,6 +1,7 @@
 import os
 import io
 from datetime import timedelta
+import logging
 
 import requests
 import polars as pl
@@ -11,6 +12,8 @@ from minio.error import S3Error
 import re
 
 from config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, DANGEROUS_KEYWORDS
+
+logger = logging.getLogger(__name__)
 
 class DataService:
     def __init__(self):
@@ -29,7 +32,7 @@ class DataService:
             )
             return client
         except Exception as e:
-            print(f"MinIO에 연결할 수 없습니다. 오류: {e}")
+            logger.error("MinIO 초기화 실패", exc_info=e)
             return None
 
     def _create_presigned_url(self, bucket_name: str, file_name: str, expires_in_hours: int = 1) -> str:
@@ -46,40 +49,64 @@ class DataService:
                 file_name,
                 expires=timedelta(hours=expires_in_hours)
             )
-
-            print(f"Pre-signed URL: {self.url}")
+            logger.info("Pre-signed URL 생성 완료")
         except Exception as e:
             raise RuntimeError(f"Pre-signed URL 생성 중 오류 발생: {e}") from e
 
-    def _get_or_load_dataframe(self, bucket_name: str, object_name: str) -> pl.DataFrame:
+    def _get_or_load_dataframe(self, bucket_name: str, file_name: str) -> pl.DataFrame:
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 초기화되지 않았습니다.")
         if not self.minio_client.bucket_exists(bucket_name):
             raise FileNotFoundError(f"MinIO 버킷 '{bucket_name}'을 찾을 수 없습니다.")
-        if not self.minio_client.stat_object(bucket_name, object_name):
-            raise FileNotFoundError(f"파일 '{object_name}'을 찾을 수 없습니다.")
-        
-        if object_name[0] == "/":
-            object_name = object_name[1:]
+        if not self.minio_client.stat_object(bucket_name, file_name):
+            raise FileNotFoundError(f"파일 '{file_name}'을 찾을 수 없습니다.")
 
-        folder_name = object_name.split("/")[0]
-        file_name = object_name.split("/")[1]
+        if file_name[0] == "/":
+            file_name = file_name[1:]
 
         base_name, ext = os.path.splitext(file_name)
         ext = ext.lower().lstrip(".")           
-        parquet_name = f"{folder_name}/{base_name}.parquet"
+        parquet_name = f"{base_name}.parquet"
 
         try:
             objects = self.minio_client.list_objects(bucket_name, prefix=parquet_name, recursive=True)
             parquet_exists = any(obj.object_name == parquet_name for obj in objects)
 
             if not parquet_exists:
-                self._create_presigned_url(bucket_name, object_name)
+                self._create_presigned_url(bucket_name, file_name)
                 response = requests.get(self.url)
                 buffer = io.BytesIO(response.content)
 
                 if ext == "csv":
-                    df = pl.read_csv(buffer, infer_schema_length=10000, ignore_errors=True)
+                    try:
+                        df = pl.read_csv(
+                            buffer,
+                            infer_schema_length=10000,
+                            ignore_errors=True,
+                        )
+                        print("df : ", df)
+                    except Exception as e:
+                        msg = str(e).lower()
+                        if "invalid utf-8" in msg or "utf-8" in msg:
+                            buffer.seek(0)
+                            try:
+                                df = pl.read_csv(
+                                    buffer,
+                                    infer_schema_length=10000,
+                                    ignore_errors=True,
+                                    encoding="utf-8-sig",
+                                )
+                            except Exception as e2:
+                                logger.warning("utf8-lossy도 실패, latin1로 재시도")
+                                buffer.seek(0)
+                                df = pl.read_csv(
+                                    buffer,
+                                    infer_schema_length=10000,
+                                    ignore_errors=True,
+                                    encoding="euc-kr",
+                                )
+                        else:
+                            raise
                 elif ext in ("xlsx", "xls"):
                     df = pl.read_excel(buffer, infer_schema_length=10000, ignore_errors=True)
                 else:
@@ -105,7 +132,7 @@ class DataService:
 
         except S3Error as exc:
             if exc.code == 'NoSuchKey':
-                raise FileNotFoundError(f"파일 '{object_name}' 또는 Parquet 버전을 찾을 수 없습니다.")
+                raise FileNotFoundError(f"파일 '{file_name}' 또는 Parquet 버전을 찾을 수 없습니다.")
             else:
                 raise
 
@@ -177,9 +204,9 @@ class DataService:
                 }
         return distributions
 
-    def get_dataset_details(self, bucket_name: str, object_name: str):
+    def get_dataset_details(self, bucket_name: str, file_name: str):
         """데이터셋의 초기 정보 반환"""
-        df = self._get_or_load_dataframe(bucket_name, object_name)
+        df = self._get_or_load_dataframe(bucket_name, file_name)
         preview = self.con.execute(f"SELECT * FROM df LIMIT 10").pl()
         
         distributions = self._calculate_distributions(df)
