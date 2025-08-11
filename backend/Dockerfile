@@ -17,11 +17,11 @@ COPY . .
 EXPOSE 8000
 
 # 애플리케이션 실행 환경 변수
-ENV LOG_FILE_PATH=./app.log
+ENV LOG_FILE_PATH=./logs/app.log
 ENV LOG_LEVEL=INFO
 
 # 로그 디렉터리 생성
-RUN mkdir -p /DATA/data-viewer/log
+RUN mkdir -p /DATA/data-viewer/logs
 
 # 앱을 애플리케이션 내부 진입점으로 실행 (내부에서 log_config를 주입)
 CMD ["python", "main.py"]

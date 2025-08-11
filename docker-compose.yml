@@ -6,10 +6,10 @@ services:
       - "8000:8000"
     restart: unless-stopped
     environment:
-      - LOG_FILE_PATH=/DATA/data-viewer/log/app.log
+      - LOG_FILE_PATH=/DATA/data-viewer/logs/app.log
       - LOG_LEVEL=INFO
     volumes:
-      - ./logs/backend:/DATA/data-viewer/log
+      - ./logs:/DATA/data-viewer/logs
 
   frontend:
     build:
