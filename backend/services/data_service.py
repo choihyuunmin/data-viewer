@@ -82,7 +82,6 @@ class DataService:
                         df = pl.read_csv(
                             buffer,
                             infer_schema_length=10000,
-                            ignore_errors=True,
                         )
                         print("df : ", df)
                     except Exception as e:
@@ -93,7 +92,6 @@ class DataService:
                                 df = pl.read_csv(
                                     buffer,
                                     infer_schema_length=10000,
-                                    ignore_errors=True,
                                     encoding="utf-8-sig",
                                 )
                             except Exception as e2:
@@ -102,13 +100,12 @@ class DataService:
                                 df = pl.read_csv(
                                     buffer,
                                     infer_schema_length=10000,
-                                    ignore_errors=True,
                                     encoding="euc-kr",
                                 )
                         else:
                             raise
                 elif ext in ("xlsx", "xls"):
-                    df = pl.read_excel(buffer, infer_schema_length=10000, ignore_errors=True)
+                    df = pl.read_excel(buffer, infer_schema_length=10000)
                 else:
                     raise ValueError(f"지원하지 않는 파일 형식: {ext}")
 
