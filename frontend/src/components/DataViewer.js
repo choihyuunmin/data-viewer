@@ -669,7 +669,7 @@ class DataViewer {
         this.nextButton.disabled = this.currentPage >= this.totalPages
         
         this.totalRowsElement.textContent = `총 ${this.totalRows.toLocaleString()}건`
-        this.pageInfo.textContent = `${this.currentPage} / ${this.totalPages}`
+        this.pageInfo.textContent = `${this.currentPage.toLocaleString()} / ${this.totalPages.toLocaleString()}`
         this.prevButton.disabled = this.currentPage <= 1
         this.nextButton.disabled = this.currentPage >= this.totalPages
     }
