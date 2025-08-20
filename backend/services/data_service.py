@@ -215,7 +215,7 @@ class DataService:
             "total": len(df)
         }
 
-    def get_paged_data(self, bucket_name: str, query: str, page: int, page_size: int):
+    def get_paged_data(self, query: str, page: int, page_size: int):
         base_query = query.replace('from data', f'from df')
         offset = (page - 1) * page_size
         paged_query = f"{base_query} LIMIT {page_size} OFFSET {offset}"
@@ -223,7 +223,7 @@ class DataService:
         result_df = self.con.execute(paged_query).pl()
         return {"tableData": result_df.to_dicts()}
 
-    def execute_query(self, bucket_name: str, query: str):  
+    def execute_query(self, query: str):  
         """사용자 쿼리를 실행하고 결과 반환""" 
         query = query.replace(';', '')
         base_query = query.replace('from data', 'from df')
