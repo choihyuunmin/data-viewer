@@ -19,7 +19,7 @@
 }
 
 /* 다크 모드 */
-@media (prefers-color-scheme: dark) {
+/* @media (prefers-color-scheme: dark) {
   :root {
     --color-background: rgba(33, 33, 33, 0.8);
     --color-hover-background: rgba(63, 63, 63, 0.8);
@@ -28,7 +28,7 @@
     --color-hover-text: #111;
     --color-border : #333333;
   }
-}
+} */
 
 .data-viewer-container {
   width: 100%;
