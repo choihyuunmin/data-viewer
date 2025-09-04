@@ -72,6 +72,12 @@ class DataViewer {
                                 class="execute-button">
                                 실행
                             </button>
+                            <button 
+                                id="resetButton"
+                                class="execute-button reset-button"
+                                type="button">
+                                초기화
+                            </button>
                         </div>
                         <div class="from-desc">from 절은 data 테이블로 고정되어 있습니다.</div>
                     </div>
@@ -108,6 +114,7 @@ class DataViewer {
 
         this.queryInput = this.container.querySelector('#queryInput')
         this.executeButton = this.container.querySelector('#executeButton')
+        this.resetButton = this.container.querySelector('#resetButton')
         this.loadingOverlay = this.container.querySelector('.loading-overlay');
         this.totalRowsElement = this.container.querySelector('#totalRows')
         this.tableHeader = this.container.querySelector('#tableHeader')
@@ -144,6 +151,13 @@ class DataViewer {
             this.currentPage = 1;
             this.executeQuery();
         });
+
+        if (this.resetButton) {
+            this.resetButton.addEventListener('click', () => {
+                this.queryInput.value = this.query
+                this.queryInput.focus();
+            });
+        }
 
         this.prevButton.addEventListener('click', () => {
             if (this.currentPage > 1) {

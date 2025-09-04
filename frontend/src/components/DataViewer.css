@@ -14,6 +14,10 @@
   --color-shadow: rgba(0, 121, 4, 0.1);
   --color-red: rgba(225, 21, 21, 0.8);
   --color-blue: rgba(31, 94, 255, 0.8);
+  --color-point-dim: rgba(63, 148, 66, 1);
+  --color-point-dim-hover: rgba(55, 130, 58, 1);
+  --color-point-muted: rgba(76, 175, 80, 0.85);
+  --color-point-muted-hover: rgba(76, 175, 80, 0.92);
   --color-white : #fff;
   --color-black : #000;
 }
@@ -359,6 +363,14 @@ tr:hover td:hover {
 
 .execute-button:hover {
   background-color: var(--color-hover-point);
+}
+
+.execute-button.reset-button {
+  background-color: var(--color-point-muted);
+}
+
+.execute-button.reset-button:hover {
+  background-color: var(--color-point-muted-hover);
 }
 
 .execute-button.wide-thin {
