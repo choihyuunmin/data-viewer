@@ -83,8 +83,9 @@ class DataViewer {
                     </div>
                 </div>
                 
-                <div id="totalRows" class="total-rows">
-                    총 0건
+                <div class="summary-row" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
+                    <div id="totalRows" class="total-rows">총 0건</div>
+                    <button id="downloadButton" class="execute-button" style="height: 32px; padding: 6px 12px;">다운로드</button>
                 </div>
                 <div id="tableContainer" class="table-container">
                     <table>
@@ -115,6 +116,7 @@ class DataViewer {
         this.queryInput = this.container.querySelector('#queryInput')
         this.executeButton = this.container.querySelector('#executeButton')
         this.resetButton = this.container.querySelector('#resetButton')
+        this.downloadButton = this.container.querySelector('#downloadButton')
         this.loadingOverlay = this.container.querySelector('.loading-overlay');
         this.totalRowsElement = this.container.querySelector('#totalRows')
         this.tableHeader = this.container.querySelector('#tableHeader')
@@ -151,6 +153,12 @@ class DataViewer {
             this.currentPage = 1;
             this.executeQuery();
         });
+
+        if (this.downloadButton) {
+            this.downloadButton.addEventListener('click', () => {
+                this.downloadData();
+            })
+        }
 
         if (this.resetButton) {
             this.resetButton.addEventListener('click', () => {
@@ -213,8 +221,7 @@ class DataViewer {
             })
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || '데이터셋 로딩 실패');
+                throw new Error('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요');
             }
 
             const data = await response.json()
@@ -230,9 +237,8 @@ class DataViewer {
                 this.sendHeightToParent()
             }
         } catch (err) {
-            this.error = err.message
-            console.error(this.error)
-            this.showError(this.error)
+            console.error(err)
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
             this.hideLoading();
@@ -241,7 +247,7 @@ class DataViewer {
 
     async executeQuery() {
         if (!this.bucket_name) {
-            this.showError('데이터셋이 로드되지 않았습니다.')
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
             return
         }
 
@@ -278,7 +284,7 @@ class DataViewer {
 
             if (!response.ok) {
                 const errorData = await response.json()
-                throw new Error(errorData.detail || '쿼리 실행 중 오류가 발생했습니다.')
+                throw new Error('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
             }
 
             const data = await response.json()
@@ -296,16 +302,52 @@ class DataViewer {
             }
         } catch (error) {
             console.error('Query execution error:', error)
-            this.showError(error.message)
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
             this.hideLoading();
         }
     }
 
+    async downloadData() {
+        if (!this.bucket_name) {
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
+            return
+        }
+        try {
+            const query = (this.queryInput?.value || this.query).trim()
+            const response = await fetch(`${config.api.baseUrl}/dataviewer/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    query: query,
+                    bucket_name: this.bucket_name
+                })
+            })
+
+            if (!response.ok) {
+                throw new Error('download failed')
+            }
+
+            const blob = await response.blob()
+            const url = window.URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            const defaultName = this.file_name ? this.file_name.replace(/\.[^.]+$/, '') + '.csv' : 'download.csv'
+            a.download = defaultName
+            document.body.appendChild(a)
+            a.click()
+            a.remove()
+            window.URL.revokeObjectURL(url)
+        } catch (e) {
+            console.error('Download error:', e)
+            this.showError('다운로드에 실패했습니다. 관리자에게 문의해주세요.')
+        }
+    }
+
     async changePage(page) {
         if (!this.bucket_name) {
-            this.showError('데이터셋이 로드되지 않았습니다.')
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
             return
         }
 
@@ -325,14 +367,16 @@ class DataViewer {
                     page_size: this.pageSize,
                 })
             })
-
+            if (!response.ok) {
+                throw new Error('page failed')
+            }
             const data = await response.json()
             this.tableData = data.tableData
             this.updateTableBody()
             this.updatePagination()
         } catch (error) {
             console.error('Page change error:', error)
-            this.showError(error.message)
+            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
         }

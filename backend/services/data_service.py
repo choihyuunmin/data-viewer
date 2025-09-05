@@ -241,3 +241,20 @@ class DataService:
             "distributions": distributions,
             "total": total_count
         } 
+
+    def download_query(self, query: str) -> bytes:
+        """사용자 쿼리 전체 결과를 CSV로 반환"""
+        safe_query = query.replace(';', '')
+        base_query = safe_query.replace('from data', 'from df')
+        try:
+            df = self.con.execute(base_query).pl()
+        except Exception as e:
+            raise RuntimeError(f"쿼리 실행 실패: {e}") from e
+
+        try:
+            csv_bytes_io = io.BytesIO()
+            df.write_csv(csv_bytes_io)
+            csv_bytes_io.seek(0)
+            return csv_bytes_io.getvalue()
+        except Exception as e:
+            raise RuntimeError(f"CSV 변환 실패: {e}") from e
