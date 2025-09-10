@@ -5,13 +5,19 @@ import logging
 
 import requests
 import polars as pl
+from polars import datatypes as pld
 import duckdb
 import numpy as np
 from minio import Minio
 from minio.error import S3Error
 import re
 
-from config import MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, DANGEROUS_KEYWORDS
+from config import (
+    MINIO_ENDPOINT,
+    MINIO_ACCESS_KEY,
+    MINIO_SECRET_KEY,
+    DANGEROUS_KEYWORDS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +27,28 @@ class DataService:
         self.url = ""
         self.df = None
         self.con = duckdb.connect()
+        self.use_duckdb_view = False
+        self.total_rows_cache = None
+        self.large_file_threshold_bytes = int(os.environ.get("LARGE_FILE_THRESHOLD_BYTES", str(1 * 1024 * 1024 * 1024)))
+        self.large_sample_rows = int(os.environ.get("LARGE_SAMPLE_ROWS", "1000000"))
+
+    def _clean_dataframe_nulls(self, df: pl.DataFrame) -> pl.DataFrame:
+        expressions = []
+        for column_name, dtype in zip(df.columns, df.dtypes):
+            col = pl.col(column_name)
+            if pld.is_integer_dtype(dtype):
+                expressions.append(col.fill_null(0).alias(column_name))
+            elif pld.is_float_dtype(dtype):
+                expressions.append(col.fill_nan(0.0).fill_null(0.0).alias(column_name))
+            elif pld.is_boolean_dtype(dtype):
+                expressions.append(col.fill_null(False).alias(column_name))
+            elif pld.is_temporal_dtype(dtype):
+                # 날짜/시간 계열은 문자열로 변환해 빈 문자열로 채움(표시 일관성 유지)
+                expressions.append(col.cast(pl.Utf8).fill_null("").alias(column_name))
+            else:
+                # 문자열/범주형 등은 빈 문자열로 채움
+                expressions.append(col.fill_null("").alias(column_name))
+        return df.select(expressions)
 
     def _init_minio(self):
         try:
@@ -69,6 +97,20 @@ class DataService:
         parquet_name = f"{base_name}.parquet"
 
         try:
+            # 대용량(CSV/Parquet)은 변환 없이 DuckDB 외부 스캔 뷰 사용
+            object_size = getattr(stat, 'size', None)
+            if object_size is not None and object_size >= self.large_file_threshold_bytes and ext in ("csv", "parquet"):
+                self._create_presigned_url(bucket_name, file_name)
+                self.use_duckdb_view = True
+                if ext == "csv":
+                    self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{self.url}', all_varchar=true, sample_size=200000)")
+                else:  # parquet
+                    self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{self.url}')")
+                cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                logger.info("대용량 모드(DuckDB 뷰, MinIO) 활성화", extra={"rows": self.total_rows_cache, "cols": len(cols_df.columns)})
+                return cols_df
+
             objects = self.minio_client.list_objects(bucket_name, prefix=parquet_name, recursive=True)
             parquet_exists = any(obj.object_name == parquet_name for obj in objects)
 
@@ -78,12 +120,17 @@ class DataService:
                 buffer = io.BytesIO(response.content)
 
                 if ext == "csv":
+                    common_args = dict(
+                        infer_schema_length=100000,
+                        ignore_errors=True,
+                        null_values=["", "NA", "N/A", "null", "NULL", "NaN", "nan", "-", "—"],
+                        try_parse_dates=True,
+                    )
                     try:
                         df = pl.read_csv(
                             buffer,
-                            infer_schema_length=10000,
+                            **common_args,
                         )
-                        print("df : ", df)
                     except Exception as e:
                         msg = str(e).lower()
                         if "invalid utf-8" in msg or "utf-8" in msg:
@@ -91,21 +138,29 @@ class DataService:
                             try:
                                 df = pl.read_csv(
                                     buffer,
-                                    infer_schema_length=10000,
                                     encoding="utf-8-sig",
+                                    **common_args,
                                 )
-                            except Exception as e2:
-                                logger.warning("utf8-lossy도 실패, latin1로 재시도")
+                            except Exception:
+                                logger.warning("utf8-sig 실패, euc-kr로 재시도")
                                 buffer.seek(0)
                                 df = pl.read_csv(
                                     buffer,
-                                    infer_schema_length=10000,
                                     encoding="euc-kr",
+                                    **common_args,
                                 )
                         else:
-                            raise
+                            buffer.seek(0)
+                            df = pl.read_csv(
+                                buffer,
+                                dtypes=pl.Utf8,
+                                **{k: v for k, v in common_args.items() if k != "ignore_errors"}
+                            )
+                    # 업로드 전 전체 null 제거 적용
+                    df = self._clean_dataframe_nulls(df)
                 elif ext in ("xlsx", "xls"):
                     df = pl.read_excel(buffer, infer_schema_length=10000)
+                    df = self._clean_dataframe_nulls(df)
                 else:
                     raise ValueError(f"지원하지 않는 파일 형식: {ext}")
 
@@ -122,10 +177,18 @@ class DataService:
                 )
 
             self._create_presigned_url(bucket_name, parquet_name)
-
-            df = self.con.execute(f"SELECT * FROM read_parquet('{self.url}')").pl()
-            self.con.register("df", df)
-            return df
+            logger.info("Parquet 읽기 시작", extra={"url": True, "bucket": bucket_name, "file": parquet_name})
+            
+            if object_size is not None and object_size >= self.large_file_threshold_bytes:
+                self.use_duckdb_view = True
+                self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{self.url}')")
+                cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                return cols_df
+            else:
+                df = self.con.execute(f"SELECT * FROM read_parquet('{self.url}')").pl()
+                self.con.register("df", df)
+                return df
 
         except S3Error as exc:
             if exc.code == 'NoSuchKey':
@@ -205,15 +268,36 @@ class DataService:
         """데이터셋의 초기 정보 반환"""
         df = self._get_or_load_dataframe(bucket_name, file_name)
         preview = self.con.execute(f"SELECT * FROM df LIMIT 10").pl()
-        
-        distributions = self._calculate_distributions(df)
-        return {
-            "bucket_name": bucket_name,
-            "columns": df.columns,
-            "tableData": preview.to_dicts(),
-            "distributions": distributions,
-            "total": len(df)
-        }
+
+        if self.use_duckdb_view:
+            # 대용량: 전체 적재 대신 샘플로 분포 계산, 총건수는 캐시/COUNT(*) 사용
+            try:
+                sample_df = self.con.execute(f"SELECT * FROM df LIMIT {self.large_sample_rows}").pl()
+            except Exception:
+                sample_df = preview
+            distributions = self._calculate_distributions(sample_df)
+            total_count = self.total_rows_cache
+            if total_count is None:
+                try:
+                    total_count = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                except Exception:
+                    total_count = 0
+            return {
+                "bucket_name": bucket_name,
+                "columns": preview.columns,
+                "tableData": preview.to_dicts(),
+                "distributions": distributions,
+                "total": int(total_count),
+            }
+        else:
+            distributions = self._calculate_distributions(df)
+            return {
+                "bucket_name": bucket_name,
+                "columns": df.columns,
+                "tableData": preview.to_dicts(),
+                "distributions": distributions,
+                "total": len(df)
+            }
 
     def get_paged_data(self, query: str, page: int, page_size: int):
         base_query = query.replace('from data', f'from df')
@@ -228,18 +312,26 @@ class DataService:
         query = query.replace(';', '')
         base_query = query.replace('from data', 'from df')
         total_count = self.con.execute(f"SELECT COUNT(*) FROM ({base_query}) AS sub").fetchone()[0]
-        
-        paged_query = f"{base_query} LIMIT 10"
 
-        full_df = self.con.execute(base_query).pl()
+        paged_query = f"{base_query} LIMIT 10"
         result_df = self.con.execute(paged_query).pl()
-        distributions = self._calculate_distributions(full_df)
-        
+
+        # 대용량: 분포는 샘플로 계산하여 OOM 방지
+        try:
+            sample_limit = min(self.large_sample_rows, max(10, int(total_count)))
+        except Exception:
+            sample_limit = self.large_sample_rows
+        try:
+            sample_df = self.con.execute(f"SELECT * FROM ({base_query}) AS sub LIMIT {sample_limit}").pl()
+        except Exception:
+            sample_df = result_df
+        distributions = self._calculate_distributions(sample_df)
+
         return {
             "columns": result_df.columns,
             "tableData": result_df.to_dicts(),
             "distributions": distributions,
-            "total": total_count
+            "total": int(total_count)
         } 
 
     def download_query(self, query: str) -> bytes:
