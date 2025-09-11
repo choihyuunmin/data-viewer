@@ -5,7 +5,6 @@ import logging
 
 import requests
 import polars as pl
-from polars import datatypes as pld
 import duckdb
 import numpy as np
 from minio import Minio
@@ -33,6 +32,21 @@ class DataService:
         self.large_file_threshold_bytes = int(os.environ.get("LARGE_FILE_THRESHOLD_BYTES", str(1 * 1024 * 1024 * 1024)))
         self.large_sample_rows = int(os.environ.get("LARGE_SAMPLE_ROWS", "1000000"))
 
+    def _is_integer_dtype(self, dtype: pl.DataType) -> bool:
+        integer_dtypes = {pl.Int8, pl.Int16, pl.Int32, pl.Int64, pl.UInt8, pl.UInt16, pl.UInt32, pl.UInt64}
+        return dtype in integer_dtypes
+
+    def _is_float_dtype(self, dtype: pl.DataType) -> bool:
+        float_dtypes = {pl.Float32, pl.Float64}
+        return dtype in float_dtypes
+
+    def _is_boolean_dtype(self, dtype: pl.DataType) -> bool:
+        return dtype == pl.Boolean
+
+    def _is_temporal_dtype(self, dtype: pl.DataType) -> bool:
+        temporal_dtypes = {pl.Date, pl.Datetime, pl.Time, pl.Duration}
+        return dtype in temporal_dtypes
+
     def _sql_string_literal(self, value: str) -> str:
         return value.replace("'", "''")
 
@@ -50,13 +64,13 @@ class DataService:
         expressions = []
         for column_name, dtype in zip(df.columns, df.dtypes):
             col = pl.col(column_name)
-            if pld.is_integer_dtype(dtype):
+            if self._is_integer_dtype(dtype):
                 expressions.append(col.fill_null(0).alias(column_name))
-            elif pld.is_float_dtype(dtype):
+            elif self._is_float_dtype(dtype):
                 expressions.append(col.fill_nan(0.0).fill_null(0.0).alias(column_name))
-            elif pld.is_boolean_dtype(dtype):
+            elif self._is_boolean_dtype(dtype):
                 expressions.append(col.fill_null(False).alias(column_name))
-            elif pld.is_temporal_dtype(dtype):
+            elif self._is_temporal_dtype(dtype):
                 # 날짜/시간 계열은 문자열로 변환해 빈 문자열로 채움(표시 일관성 유지)
                 expressions.append(col.cast(pl.Utf8).fill_null("").alias(column_name))
             else:
