@@ -16,7 +16,8 @@ from config import (
     MINIO_ENDPOINT,
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,
-    DANGEROUS_KEYWORDS
+    DANGEROUS_KEYWORDS,
+    NAS_ROOT_PATH
 )
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,19 @@ class DataService:
         self.total_rows_cache = None
         self.large_file_threshold_bytes = int(os.environ.get("LARGE_FILE_THRESHOLD_BYTES", str(1 * 1024 * 1024 * 1024)))
         self.large_sample_rows = int(os.environ.get("LARGE_SAMPLE_ROWS", "1000000"))
+
+    def _sql_string_literal(self, value: str) -> str:
+        return value.replace("'", "''")
+
+    def _resolve_nas_path(self, bucket_name: str, file_name: str) -> str:
+        if file_name.startswith('/'):
+            file_name = file_name[1:]
+        safe_bucket = bucket_name.lstrip('/') if bucket_name else ''
+        abs_path = os.path.abspath(os.path.join(NAS_ROOT_PATH, safe_bucket, file_name))
+        nas_root_abs = os.path.abspath(NAS_ROOT_PATH)
+        if not abs_path.startswith(nas_root_abs + os.sep) and abs_path != nas_root_abs:
+            raise PermissionError("NAS 경로 이탈이 감지되었습니다.")
+        return abs_path
 
     def _clean_dataframe_nulls(self, df: pl.DataFrame) -> pl.DataFrame:
         expressions = []
@@ -81,7 +95,106 @@ class DataService:
         except Exception as e:
             raise RuntimeError(f"Pre-signed URL 생성 중 오류 발생: {e}") from e
 
-    def _get_or_load_dataframe(self, bucket_name: str, file_name: str) -> pl.DataFrame:
+    def _get_or_load_dataframe(self, bucket_name: str, file_name: str, storage_type: str | None = None) -> pl.DataFrame:
+        if storage_type == 'nas':
+            # ---- NAS 경로 처리 ----
+            if not os.path.isdir(NAS_ROOT_PATH):
+                raise FileNotFoundError(f"NAS 루트 경로를 찾을 수 없습니다: {NAS_ROOT_PATH}")
+
+            if file_name and file_name[0] == "/":
+                file_name = file_name[1:]
+            abs_path = self._resolve_nas_path(bucket_name, file_name)
+            if not os.path.exists(abs_path):
+                raise FileNotFoundError(f"파일을 찾을 수 없습니다: {abs_path}")
+
+            base_name, ext = os.path.splitext(abs_path)
+            ext = ext.lower().lstrip(".")
+            parquet_path = f"{base_name}.parquet"
+
+            try:
+                object_size = None
+                try:
+                    object_size = os.path.getsize(abs_path)
+                except Exception:
+                    pass
+
+                # 대용량 외부뷰
+                if object_size is not None and object_size >= self.large_file_threshold_bytes and ext in ("csv", "parquet"):
+                    self.use_duckdb_view = True
+                    path_lit = self._sql_string_literal(abs_path)
+                    if ext == "csv":
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)")
+                    else:
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
+                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                    self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                    logger.info("대용량 모드(DuckDB 뷰, NAS) 활성화", extra={"rows": self.total_rows_cache, "cols": len(cols_df.columns)})
+                    return cols_df
+
+                # parquet 캐시 없으면 생성
+                if not os.path.exists(parquet_path):
+                    if ext == "csv":
+                        common_args = dict(
+                            infer_schema_length=100000,
+                            ignore_errors=True,
+                            null_values=["", "NA", "N/A", "null", "NULL", "NaN", "nan", "-", "—"],
+                            try_parse_dates=True,
+                        )
+                        try:
+                            df = pl.read_csv(abs_path, **common_args)
+                        except Exception as e:
+                            msg = str(e).lower()
+                            if "invalid utf-8" in msg or "utf-8" in msg:
+                                try:
+                                    df = pl.read_csv(abs_path, encoding="utf-8-sig", **common_args)
+                                except Exception:
+                                    logger.warning("utf8-sig 실패, euc-kr로 재시도")
+                                    df = pl.read_csv(abs_path, encoding="euc-kr", **common_args)
+                            else:
+                                df = pl.read_csv(
+                                    abs_path,
+                                    dtypes=pl.Utf8,
+                                    **{k: v for k, v in common_args.items() if k != "ignore_errors"}
+                                )
+                        df = self._clean_dataframe_nulls(df)
+                    elif ext in ("xlsx", "xls"):
+                        df = pl.read_excel(abs_path, infer_schema_length=10000)
+                        df = self._clean_dataframe_nulls(df)
+                    elif ext == "parquet":
+                        df = None
+                    else:
+                        raise ValueError(f"지원하지 않는 파일 형식: {ext}")
+
+                    if df is not None:
+                        try:
+                            df.write_parquet(parquet_path)
+                        except Exception as e:
+                            logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
+
+                read_target = parquet_path if os.path.exists(parquet_path) else abs_path
+                path_lit = self._sql_string_literal(read_target)
+
+                if object_size is not None and object_size >= self.large_file_threshold_bytes:
+                    self.use_duckdb_view = True
+                    if read_target.lower().endswith('.csv'):
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)")
+                    else:
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
+                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                    self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                    return cols_df
+                else:
+                    if read_target.lower().endswith('.csv'):
+                        df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)").pl()
+                    else:
+                        df = self.con.execute(f"SELECT * FROM read_parquet('{path_lit}')").pl()
+                    self.con.register("df", df)
+                    return df
+
+            except Exception:
+                raise
+
+        # ---- MinIO 처리 ----
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 초기화되지 않았습니다.")
         if not self.minio_client.bucket_exists(bucket_name):
@@ -89,15 +202,15 @@ class DataService:
         if not self.minio_client.stat_object(bucket_name, file_name):
             raise FileNotFoundError(f"파일 '{file_name}'을 찾을 수 없습니다.")
 
-        if file_name[0] == "/":
+        if file_name and file_name[0] == "/":
             file_name = file_name[1:]
 
         base_name, ext = os.path.splitext(file_name)
-        ext = ext.lower().lstrip(".")           
+        ext = ext.lower().lstrip(".")
         parquet_name = f"{base_name}.parquet"
 
         try:
-            # 대용량(CSV/Parquet)은 변환 없이 DuckDB 외부 스캔 뷰 사용
+            stat = self.minio_client.stat_object(bucket_name, file_name)
             object_size = getattr(stat, 'size', None)
             if object_size is not None and object_size >= self.large_file_threshold_bytes and ext in ("csv", "parquet"):
                 self._create_presigned_url(bucket_name, file_name)
@@ -127,28 +240,17 @@ class DataService:
                         try_parse_dates=True,
                     )
                     try:
-                        df = pl.read_csv(
-                            buffer,
-                            **common_args,
-                        )
+                        df = pl.read_csv(buffer, **common_args)
                     except Exception as e:
                         msg = str(e).lower()
                         if "invalid utf-8" in msg or "utf-8" in msg:
                             buffer.seek(0)
                             try:
-                                df = pl.read_csv(
-                                    buffer,
-                                    encoding="utf-8-sig",
-                                    **common_args,
-                                )
+                                df = pl.read_csv(buffer, encoding="utf-8-sig", **common_args)
                             except Exception:
                                 logger.warning("utf8-sig 실패, euc-kr로 재시도")
                                 buffer.seek(0)
-                                df = pl.read_csv(
-                                    buffer,
-                                    encoding="euc-kr",
-                                    **common_args,
-                                )
+                                df = pl.read_csv(buffer, encoding="euc-kr", **common_args)
                         else:
                             buffer.seek(0)
                             df = pl.read_csv(
@@ -156,7 +258,6 @@ class DataService:
                                 dtypes=pl.Utf8,
                                 **{k: v for k, v in common_args.items() if k != "ignore_errors"}
                             )
-                    # 업로드 전 전체 null 제거 적용
                     df = self._clean_dataframe_nulls(df)
                 elif ext in ("xlsx", "xls"):
                     df = pl.read_excel(buffer, infer_schema_length=10000)
@@ -178,7 +279,7 @@ class DataService:
 
             self._create_presigned_url(bucket_name, parquet_name)
             logger.info("Parquet 읽기 시작", extra={"url": True, "bucket": bucket_name, "file": parquet_name})
-            
+
             if object_size is not None and object_size >= self.large_file_threshold_bytes:
                 self.use_duckdb_view = True
                 self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{self.url}')")
@@ -195,6 +296,8 @@ class DataService:
                 raise FileNotFoundError(f"파일 '{file_name}' 또는 Parquet 버전을 찾을 수 없습니다.")
             else:
                 raise
+
+    
 
     def _calculate_distributions(self, df: pl.DataFrame):
         distributions = {}
@@ -264,9 +367,9 @@ class DataService:
                 }
         return distributions
 
-    def get_dataset_details(self, bucket_name: str, file_name: str):
+    def get_dataset_details(self, bucket_name: str, file_name: str, storage_type: str | None = None):
         """데이터셋의 초기 정보 반환"""
-        df = self._get_or_load_dataframe(bucket_name, file_name)
+        df = self._get_or_load_dataframe(bucket_name, file_name, storage_type)
         preview = self.con.execute(f"SELECT * FROM df LIMIT 10").pl()
 
         if self.use_duckdb_view:

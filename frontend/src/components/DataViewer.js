@@ -38,6 +38,8 @@ class DataViewer {
         const urlParams = new URLSearchParams(window.location.search);
         const bucketName = urlParams.get('bucket');
         const fileName = urlParams.get('file');
+        this.storage = urlParams.get('type').toLowerCase();
+        this.apiPrefix = `${config.api.baseUrl}/dataviewer`
 
         if (bucketName && fileName) {
             this.bucket_name = bucketName;
@@ -211,7 +213,7 @@ class DataViewer {
         this.sortDirection = null
 
         try {
-            const response = await fetch(`${config.api.baseUrl}/dataviewer/load_dataset`, {
+            const response = await fetch(`${this.apiPrefix}/load_dataset?type=${encodeURIComponent(this.storage)}` , {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -269,7 +271,7 @@ class DataViewer {
         this.error = null
 
         try {
-            const response = await fetch(`${config.api.baseUrl}/dataviewer/query`, {
+            const response = await fetch(`${this.apiPrefix}/query`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'
@@ -316,7 +318,7 @@ class DataViewer {
         }
         try {
             const query = (this.queryInput?.value || this.query).trim()
-            const response = await fetch(`${config.api.baseUrl}/dataviewer/download`, {
+            const response = await fetch(`${this.apiPrefix}/download`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -355,7 +357,7 @@ class DataViewer {
         this.error = null
 
         try {
-            const response = await fetch(`${config.api.baseUrl}/dataviewer/page`, {
+            const response = await fetch(`${this.apiPrefix}/page`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json'

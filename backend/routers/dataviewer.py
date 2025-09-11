@@ -11,10 +11,14 @@ service = DataService()
 logger = logging.getLogger(__name__)
 
 @router.post("/load_dataset")
-async def load_dataset(request: LoadDatasetRequest):
+async def load_dataset(request: LoadDatasetRequest, type: str | None = None):
     try:
         logger.info("/load_dataset 호출", extra={"bucket": request.bucket_name, "file_name": request.file_name})
-        return service.get_dataset_details(request.bucket_name, request.file_name)
+        storage_type = (type or '').lower()
+        if storage_type not in ('', 'nas', 'minio'):
+            raise HTTPException(status_code=400, detail="type 파라미터는 'nas' 또는 'minio'만 허용됩니다.")
+        
+        return service.get_dataset_details(request.bucket_name, request.file_name, storage_type)
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail="File not found")
     except Exception as e:
