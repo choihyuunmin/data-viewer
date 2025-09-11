@@ -38,13 +38,14 @@ class DataViewer {
         const urlParams = new URLSearchParams(window.location.search);
         const bucketName = urlParams.get('bucket');
         const fileName = urlParams.get('file');
-        this.storage = urlParams.get('type').toLowerCase();
+        const storageType = urlParams.get('type');
         this.apiPrefix = `${config.api.baseUrl}/dataviewer`
 
         if (bucketName && fileName) {
             this.bucket_name = bucketName;
             this.file_name = fileName;
-            this.loadDataset(this.bucket_name, this.file_name);
+            this.storage = storageType;
+            this.loadDataset(this.bucket_name, this.file_name, this.storage);
         } else {
             this.showError("URL에 'bucket' 및 'file' 파라미터가 필요합니다. 예: ?bucket=my-bucket&file=data.csv");
         }
@@ -204,7 +205,8 @@ class DataViewer {
         }, 200);
     }
 
-    async loadDataset(bucketName, fileName) {
+    async loadDataset(bucketName, fileName, storage) {
+        console.log('loadDataset', bucketName, fileName, storage)
         this.showLoading();
         this.loading = true
         this.error = null
@@ -213,12 +215,13 @@ class DataViewer {
         this.sortDirection = null
 
         try {
-            const response = await fetch(`${this.apiPrefix}/load_dataset?type=${encodeURIComponent(this.storage)}` , {
+            const response = await fetch(`${this.apiPrefix}/load_dataset` , {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     bucket_name: bucketName,
-                    file_name: fileName
+                    file_name: fileName,
+                    type: storage
                 })
             })
 
