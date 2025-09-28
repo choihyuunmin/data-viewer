@@ -131,23 +131,11 @@ class DataService:
                     object_size = os.path.getsize(abs_path)
                 except Exception:
                     pass
+                is_large_initial = object_size is not None and object_size >= self.large_file_threshold_bytes
 
-                # 대용량 외부뷰
-                if object_size is not None and object_size >= self.large_file_threshold_bytes and ext in ("csv", "parquet"):
-                    self.use_duckdb_view = True
-                    path_lit = self._sql_string_literal(abs_path)
-                    if ext == "csv":
-                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)")
-                    else:
-                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
-                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
-                    self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
-                    logger.info("대용량 모드(DuckDB 뷰, NAS) 활성화", extra={"rows": self.total_rows_cache, "cols": len(cols_df.columns)})
-                    return cols_df
-
-                # parquet 캐시 없으면 생성
-                if not os.path.exists(parquet_path):
-                    if ext == "csv":
+                # 확장자별 Parquet 캐시 생성 정책
+                if ext == "csv":
+                    if not is_large_initial and not os.path.exists(parquet_path):
                         common_args = dict(
                             infer_schema_length=100000,
                             ignore_errors=True,
@@ -171,35 +159,59 @@ class DataService:
                                     **{k: v for k, v in common_args.items() if k != "ignore_errors"}
                                 )
                         df = self._clean_dataframe_nulls(df)
-                    elif ext in ("xlsx", "xls"):
-                        df = pl.read_excel(abs_path, infer_schema_length=10000)
-                        df = self._clean_dataframe_nulls(df)
-                    elif ext == "parquet":
-                        df = None
-                    else:
-                        raise ValueError(f"지원하지 않는 파일 형식: {ext}")
-
-                    if df is not None:
                         try:
                             df.write_parquet(parquet_path)
                         except Exception as e:
                             logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
+                elif ext in ("xlsx", "xls"):
+                    if not os.path.exists(parquet_path):
+                        df = pl.read_excel(abs_path, infer_schema_length=10000)
+                        df = self._clean_dataframe_nulls(df)
+                        try:
+                            df.write_parquet(parquet_path)
+                        except Exception as e:
+                            logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
+                elif ext == "parquet":
+                    pass
+                else:
+                    raise ValueError(f"지원하지 않는 파일 형식: {ext}")
 
-                read_target = parquet_path if os.path.exists(parquet_path) else abs_path
+                # read_target 결정 및 csv 대용량 시 원본 사용 강제
+                if ext in ("xlsx", "xls"):
+                    read_target = parquet_path
+                elif ext == "csv":
+                    if object_size is not None and object_size >= self.large_file_threshold_bytes:
+                        read_target = abs_path
+                    else:
+                        read_target = parquet_path if os.path.exists(parquet_path) else abs_path
+                else:
+                    read_target = abs_path
+                read_target_is_csv = read_target.lower().endswith('.csv')
                 path_lit = self._sql_string_literal(read_target)
 
-                if object_size is not None and object_size >= self.large_file_threshold_bytes:
+                is_large = False
+                if ext == "csv":
+                    is_large = object_size is not None and object_size >= self.large_file_threshold_bytes
+                else:
+                    read_target_size = None
+                    try:
+                        read_target_size = os.path.getsize(read_target)
+                        is_large = read_target_size is not None and read_target_size >= self.large_file_threshold_bytes
+                    except Exception:
+                        pass
+
+                if is_large:
                     self.use_duckdb_view = True
-                    if read_target.lower().endswith('.csv'):
-                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)")
+                    if read_target_is_csv:
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', sample_size=200000)")
                     else:
                         self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
                     cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
                     self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
                     return cols_df
                 else:
-                    if read_target.lower().endswith('.csv'):
-                        df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}', all_varchar=true, sample_size=200000)").pl()
+                    if read_target_is_csv:
+                        df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}')").pl()
                     else:
                         df = self.con.execute(f"SELECT * FROM read_parquet('{path_lit}')").pl()
                     self.con.register("df", df)
