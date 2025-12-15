@@ -1,4 +1,4 @@
-import config from '../config/webConfig'
+
 import Chart from 'chart.js/auto'
 
 const getCssVar = (varName) => {
@@ -39,7 +39,7 @@ class DataViewer {
         const bucketName = urlParams.get('bucket');
         const fileName = urlParams.get('file');
         const storageType = urlParams.get('type');
-        this.apiPrefix = `${config.api.baseUrl}/dataviewer`
+        this.apiPrefix = `/dataviewer`
 
         if (bucketName && fileName) {
             this.bucket_name = bucketName;

@@ -9,13 +9,11 @@ import duckdb
 import numpy as np
 from minio import Minio
 from minio.error import S3Error
-import re
 
 from config import (
     MINIO_ENDPOINT,
     MINIO_ACCESS_KEY,
     MINIO_SECRET_KEY,
-    DANGEROUS_KEYWORDS,
     NAS_ROOT_PATH
 )
 
@@ -25,7 +23,6 @@ class DataService:
     def __init__(self):
         self.minio_client = self._init_minio()
         self.url = ""
-        self.df = None
         self.con = duckdb.connect()
         self.use_duckdb_view = False
         self.total_rows_cache = None
@@ -59,6 +56,47 @@ class DataService:
         if not abs_path.startswith(nas_root_abs + os.sep) and abs_path != nas_root_abs:
             raise PermissionError("NAS 경로 이탈이 감지되었습니다.")
         return abs_path
+
+    def _read_csv_with_fallback(self, source, **common_args) -> pl.DataFrame:
+        """컴마와 파이프로 구분된 csv read"""
+        try:
+            df = pl.read_csv(source, **common_args)
+            if len(df.columns) == 1:
+                if hasattr(source, 'seek'):
+                    source.seek(0)
+                df = pl.read_csv(source, separator="|", **common_args)
+        except Exception as e:
+            msg = str(e).lower()
+            if "invalid utf-8" in msg or "utf-8" in msg:
+                if hasattr(source, 'seek'):
+                    source.seek(0)
+                try:
+                    df = pl.read_csv(source, encoding="utf-8-sig", **common_args)
+                    if len(df.columns) == 1:
+                        if hasattr(source, 'seek'):
+                            source.seek(0)
+                        df = pl.read_csv(source, encoding="utf-8-sig", separator="|", **common_args)
+                except Exception:
+                    if hasattr(source, 'seek'):
+                        source.seek(0)
+                    df = pl.read_csv(source, encoding="euc-kr", **common_args)
+                    if len(df.columns) == 1:
+                        if hasattr(source, 'seek'):
+                            source.seek(0)
+                        df = pl.read_csv(source, encoding="euc-kr", separator="|", **common_args)
+            else:
+                if hasattr(source, 'seek'):
+                    source.seek(0)
+                df = pl.read_csv(
+                    source,
+                    dtypes=pl.Utf8,
+                    **{k: v for k, v in common_args.items() if k != "ignore_errors"}
+                )
+                if len(df.columns) == 1:
+                    if hasattr(source, 'seek'):
+                        source.seek(0)
+                    df = pl.read_csv(source, separator="|", dtypes=pl.Utf8, **{k: v for k, v in common_args.items() if k != "ignore_errors"})
+        return df
 
     def _clean_dataframe_nulls(self, df: pl.DataFrame) -> pl.DataFrame:
         expressions = []
@@ -125,100 +163,89 @@ class DataService:
             ext = ext.lower().lstrip(".")
             parquet_path = f"{base_name}.parquet"
 
+            object_size = None
             try:
-                object_size = None
+                object_size = os.path.getsize(abs_path)
+            except Exception:
+                pass
+            is_large_initial = object_size is not None and object_size >= self.large_file_threshold_bytes
+
+            # 확장자별 Parquet 캐시 생성 정책
+            if ext == "csv":
+                if not is_large_initial and not os.path.exists(parquet_path):
+                    common_args = dict(
+                        infer_schema_length=100000,
+                        ignore_errors=True,
+                        null_values=["", "NA", "N/A", "null", "NULL", "NaN", "nan", "-", "—"],
+                        try_parse_dates=True,
+                    )
+                    df = self._read_csv_with_fallback(abs_path, **common_args)
+                    df = self._clean_dataframe_nulls(df)
+                    try:
+                        df.write_parquet(parquet_path)
+                    except Exception as e:
+                        logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
+            elif ext in ("xlsx", "xls"):
+                if not is_large_initial and not os.path.exists(parquet_path):
+                    df = pl.read_excel(abs_path, infer_schema_length=10000)
+                    df = self._clean_dataframe_nulls(df)
+                    try:
+                        df.write_parquet(parquet_path)
+                    except Exception as e:
+                        logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
+            elif ext == "parquet":
+                pass
+            else:
+                raise ValueError(f"지원하지 않는 파일 형식: {ext}")
+
+            # read_target 결정 및 csv 대용량 시 원본 사용 강제
+            if ext in ("xlsx", "xls"):
+                read_target = parquet_path
+            elif ext == "csv":
+                if object_size is not None and object_size >= self.large_file_threshold_bytes:
+                    read_target = abs_path
+                else:
+                    read_target = parquet_path if os.path.exists(parquet_path) else abs_path
+            else:
+                read_target = abs_path
+            read_target_is_csv = read_target.lower().endswith('.csv')
+            path_lit = self._sql_string_literal(read_target)
+
+            is_large = False
+            if ext == "csv":
+                is_large = object_size is not None and object_size >= self.large_file_threshold_bytes
+            else:
+                read_target_size = None
                 try:
-                    object_size = os.path.getsize(abs_path)
+                    read_target_size = os.path.getsize(read_target)
+                    is_large = read_target_size is not None and read_target_size >= self.large_file_threshold_bytes
                 except Exception:
                     pass
-                is_large_initial = object_size is not None and object_size >= self.large_file_threshold_bytes
 
-                # 확장자별 Parquet 캐시 생성 정책
-                if ext == "csv":
-                    if not is_large_initial and not os.path.exists(parquet_path):
-                        common_args = dict(
-                            infer_schema_length=100000,
-                            ignore_errors=True,
-                            null_values=["", "NA", "N/A", "null", "NULL", "NaN", "nan", "-", "—"],
-                            try_parse_dates=True,
-                        )
-                        try:
-                            df = pl.read_csv(abs_path, **common_args)
-                        except Exception as e:
-                            msg = str(e).lower()
-                            if "invalid utf-8" in msg or "utf-8" in msg:
-                                try:
-                                    df = pl.read_csv(abs_path, encoding="utf-8-sig", **common_args)
-                                except Exception:
-                                    logger.warning("utf8-sig 실패, euc-kr로 재시도")
-                                    df = pl.read_csv(abs_path, encoding="euc-kr", **common_args)
-                            else:
-                                df = pl.read_csv(
-                                    abs_path,
-                                    dtypes=pl.Utf8,
-                                    **{k: v for k, v in common_args.items() if k != "ignore_errors"}
-                                )
-                        df = self._clean_dataframe_nulls(df)
-                        try:
-                            df.write_parquet(parquet_path)
-                        except Exception as e:
-                            logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
-                elif ext in ("xlsx", "xls"):
-                    if not os.path.exists(parquet_path):
-                        df = pl.read_excel(abs_path, infer_schema_length=10000)
-                        df = self._clean_dataframe_nulls(df)
-                        try:
-                            df.write_parquet(parquet_path)
-                        except Exception as e:
-                            logger.warning("NAS Parquet 캐시 저장 실패", exc_info=e)
-                elif ext == "parquet":
-                    pass
-                else:
-                    raise ValueError(f"지원하지 않는 파일 형식: {ext}")
-
-                # read_target 결정 및 csv 대용량 시 원본 사용 강제
-                if ext in ("xlsx", "xls"):
-                    read_target = parquet_path
-                elif ext == "csv":
-                    if object_size is not None and object_size >= self.large_file_threshold_bytes:
-                        read_target = abs_path
-                    else:
-                        read_target = parquet_path if os.path.exists(parquet_path) else abs_path
-                else:
-                    read_target = abs_path
-                read_target_is_csv = read_target.lower().endswith('.csv')
-                path_lit = self._sql_string_literal(read_target)
-
-                is_large = False
-                if ext == "csv":
-                    is_large = object_size is not None and object_size >= self.large_file_threshold_bytes
-                else:
-                    read_target_size = None
-                    try:
-                        read_target_size = os.path.getsize(read_target)
-                        is_large = read_target_size is not None and read_target_size >= self.large_file_threshold_bytes
-                    except Exception:
-                        pass
-
-                if is_large:
-                    self.use_duckdb_view = True
-                    if read_target_is_csv:
-                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', sample_size=200000)")
-                    else:
-                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
+            if is_large:
+                self.use_duckdb_view = True
+                if read_target_is_csv:
+                    self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', sample_size=200000)")
                     cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
-                    self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
-                    return cols_df
+                    # 컬럼이 1개만 있으면 파이프 구분자로 재시도
+                    if len(cols_df.columns) == 1:
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{path_lit}', delim='|', sample_size=200000)")
+                        cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
                 else:
-                    if read_target_is_csv:
-                        df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}')").pl()
-                    else:
-                        df = self.con.execute(f"SELECT * FROM read_parquet('{path_lit}')").pl()
-                    self.con.register("df", df)
-                    return df
-
-            except Exception:
-                raise
+                    self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{path_lit}')")
+                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
+                return cols_df
+            else:
+                if read_target_is_csv:
+                    df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}')").pl()
+                    # 컬럼이 1개만 있으면 파이프 구분자로 재시도
+                    if len(df.columns) == 1:
+                        df = self.con.execute(f"SELECT * FROM read_csv_auto('{path_lit}', delim='|')").pl()
+                else:
+                    df = self.con.execute(f"SELECT * FROM read_parquet('{path_lit}')").pl()
+                self.con.register("df", df)
+                return df
 
         # ---- MinIO 처리 ----
         if not self.minio_client:
@@ -243,9 +270,14 @@ class DataService:
                 self.use_duckdb_view = True
                 if ext == "csv":
                     self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{self.url}', all_varchar=true, sample_size=200000)")
+                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                    # 컬럼이 1개만 있으면 파이프 구분자로 재시도
+                    if len(cols_df.columns) == 1:
+                        self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_csv_auto('{self.url}', all_varchar=true, delim='|', sample_size=200000)")
+                        cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
                 else:  # parquet
                     self.con.execute(f"CREATE OR REPLACE VIEW df AS SELECT * FROM read_parquet('{self.url}')")
-                cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
+                    cols_df = self.con.execute("SELECT * FROM df LIMIT 0").pl()
                 self.total_rows_cache = self.con.execute("SELECT COUNT(*) FROM df").fetchone()[0]
                 logger.info("대용량 모드(DuckDB 뷰, MinIO) 활성화", extra={"rows": self.total_rows_cache, "cols": len(cols_df.columns)})
                 return cols_df
@@ -265,25 +297,7 @@ class DataService:
                         null_values=["", "NA", "N/A", "null", "NULL", "NaN", "nan", "-", "—"],
                         try_parse_dates=True,
                     )
-                    try:
-                        df = pl.read_csv(buffer, **common_args)
-                    except Exception as e:
-                        msg = str(e).lower()
-                        if "invalid utf-8" in msg or "utf-8" in msg:
-                            buffer.seek(0)
-                            try:
-                                df = pl.read_csv(buffer, encoding="utf-8-sig", **common_args)
-                            except Exception:
-                                logger.warning("utf8-sig 실패, euc-kr로 재시도")
-                                buffer.seek(0)
-                                df = pl.read_csv(buffer, encoding="euc-kr", **common_args)
-                        else:
-                            buffer.seek(0)
-                            df = pl.read_csv(
-                                buffer,
-                                dtypes=pl.Utf8,
-                                **{k: v for k, v in common_args.items() if k != "ignore_errors"}
-                            )
+                    df = self._read_csv_with_fallback(buffer, **common_args)
                     df = self._clean_dataframe_nulls(df)
                 elif ext in ("xlsx", "xls"):
                     df = pl.read_excel(buffer, infer_schema_length=10000)
@@ -323,7 +337,6 @@ class DataService:
             else:
                 raise
 
-    
 
     def _calculate_distributions(self, df: pl.DataFrame):
         distributions = {}
