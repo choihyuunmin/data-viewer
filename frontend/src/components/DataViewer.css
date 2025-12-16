@@ -114,6 +114,7 @@ thead {
 th {
   font-weight: 700;
   color: var(--color-text);
+  background-color: var(--color-white);
   transition: background-color 0.2s ease;
 }
 
