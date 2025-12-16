@@ -8,14 +8,20 @@ services:
     environment:
       - LOG_FILE_PATH=/DATA/data-viewer/logs/app.log
       - LOG_LEVEL=INFO
+      - DATAVIEWER_ENV=${DATAVIEWER_ENV:-prod}
     volumes:
       - ./logs:/DATA/data-viewer/logs
+      - /DATA/krihs-file:/DATA/krihs-file
 
   frontend:
     build:
       context: ./frontend
+      args:
+        - VITE_DATAVIEWER_ENV=${DATAVIEWER_ENV:-prod}
     ports:
       - "9000:80"
     depends_on:
       - backend
-    restart: unless-stopped 
+    restart: unless-stopped
+    environment:
+      - BACKEND_HOST=${BACKEND_HOST:-192.168.0.0} 

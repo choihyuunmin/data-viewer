@@ -1,3 +1,5 @@
+import os
+
 MAX_QUERY_LENGTH = 1000
 RATE_LIMIT_WINDOW = 60
 RATE_LIMIT_MAX_REQUESTS = 100
@@ -14,9 +16,21 @@ DANGEROUS_KEYWORDS = [
     'exec', 'execute', 'union', 'script', 'javascript', 'eval', 'system'
 ]
 
-# --- MinIO 설정 ---
-MINIO_ENDPOINT = "192.168.105.41:32000"
-MINIO_ACCESS_KEY = "minioadmin"
-MINIO_SECRET_KEY = "minioadmin"
+# 환경 설정
+ENVIRONMENT = os.getenv("DATAVIEWER_ENV", "dev").lower()
 
-NAS_ROOT_PATH = "/DATA1/krihs-file"
+if ENVIRONMENT == "prod":
+    MINIO_ENDPOINT = ""
+    MINIO_ACCESS_KEY = ""
+    MINIO_SECRET_KEY = ""
+    NAS_ROOT_PATH = ""
+elif ENVIRONMENT == "":
+    MINIO_ENDPOINT = ""
+    MINIO_ACCESS_KEY = ""
+    MINIO_SECRET_KEY = ""
+    NAS_ROOT_PATH = ""
+else:
+    MINIO_ENDPOINT = ""
+    MINIO_ACCESS_KEY = ""
+    MINIO_SECRET_KEY = ""
+    NAS_ROOT_PATH = "/Users/choi/Downloads/krihs-nas"
