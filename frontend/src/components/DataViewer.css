@@ -216,6 +216,8 @@ tr:hover td:hover {
   background-color: var(--color-background);
   border: 1px solid var(--color-border);
   border-radius: 5px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .column-chart {
@@ -224,6 +226,12 @@ tr:hover td:hover {
   position: relative;
   background-color: transparent;
   cursor: default;
+}
+
+.column-chart canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .categorical-labels {
@@ -242,6 +250,7 @@ tr:hover td:hover {
   color: var(--color-text);
   white-space: nowrap;
   text-overflow: ellipsis;
+  overflow: hidden;
   position: relative;
   z-index: 1000;
   text-align: center;

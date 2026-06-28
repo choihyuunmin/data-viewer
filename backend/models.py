@@ -5,7 +5,7 @@ from config import MAX_QUERY_LENGTH, DANGEROUS_KEYWORDS
 class LoadDatasetRequest(BaseModel):
     bucket_name: str
     file_name: str
-    type: str
+    type: str = ""
 
 class QueryRequest(BaseModel):
     query: str

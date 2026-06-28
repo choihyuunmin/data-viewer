@@ -51,6 +51,15 @@ class DataViewer {
         }
     }
 
+    async getResponseErrorMessage(response, fallback) {
+        try {
+            const data = await response.json()
+            return data?.detail || fallback
+        } catch (error) {
+            return fallback
+        }
+    }
+
     initializeElements() {
         this.container.innerHTML = `
             <div class="loading-overlay">
@@ -221,12 +230,12 @@ class DataViewer {
                 body: JSON.stringify({
                     bucket_name: bucketName,
                     file_name: fileName,
-                    type: storage
+                    type: storage || ''
                 })
             })
 
             if (!response.ok) {
-                throw new Error('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요');
+                throw new Error(await this.getResponseErrorMessage(response, '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요'));
             }
 
             const data = await response.json()
@@ -237,13 +246,13 @@ class DataViewer {
                 this.totalRows = data.total
                 this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 this.bucket_name = bucketName
-                this.updateTable()
+                await this.updateTable()
                 this.updatePagination()
                 this.sendHeightToParent()
             }
         } catch (err) {
             console.error(err)
-            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
+            this.showError(err.message || '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
             this.hideLoading();
@@ -288,8 +297,7 @@ class DataViewer {
             })
 
             if (!response.ok) {
-                const errorData = await response.json()
-                throw new Error('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
+                throw new Error(await this.getResponseErrorMessage(response, '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요'))
             }
 
             const data = await response.json()
@@ -301,13 +309,13 @@ class DataViewer {
                 this.distributions = data.distributions
                 this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 
-                this.updateTable()
+                await this.updateTable()
                 this.updatePagination()
                 this.sendHeightToParent()
             }
         } catch (error) {
             console.error('Query execution error:', error)
-            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
+            this.showError(error.message || '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
             this.hideLoading();
@@ -331,7 +339,7 @@ class DataViewer {
             })
 
             if (!response.ok) {
-                throw new Error('download failed')
+                throw new Error(await this.getResponseErrorMessage(response, '다운로드에 실패했습니다. 관리자에게 문의해주세요.'))
             }
 
             const blob = await response.blob()
@@ -346,7 +354,7 @@ class DataViewer {
             window.URL.revokeObjectURL(url)
         } catch (e) {
             console.error('Download error:', e)
-            this.showError('다운로드에 실패했습니다. 관리자에게 문의해주세요.')
+            this.showError(e.message || '다운로드에 실패했습니다. 관리자에게 문의해주세요.')
         }
     }
 
@@ -373,7 +381,7 @@ class DataViewer {
                 })
             })
             if (!response.ok) {
-                throw new Error('page failed')
+                throw new Error(await this.getResponseErrorMessage(response, '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요'))
             }
             const data = await response.json()
             this.tableData = data.tableData
@@ -381,7 +389,7 @@ class DataViewer {
             this.updatePagination()
         } catch (error) {
             console.error('Page change error:', error)
-            this.showError('미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
+            this.showError(error.message || '미리보기 할 수 없는 데이터입니다. 관리자에게 문의해주세요')
         } finally {
             this.loading = false
         }
@@ -390,12 +398,12 @@ class DataViewer {
     async updateTable() {
         this.updateTableHeader()
         this.updateTableBody()
-        this.updateCharts()
+        await this.updateCharts()
     }
 
     updateTableHeader() {
         this.tableHeader.innerHTML = ''
-        this.columns.forEach(column => {
+        this.columns.forEach((column, index) => {
             const th = document.createElement('th')
             th.className = 'column-header'
             th.onclick = () => this.sortBy(column)
@@ -412,7 +420,7 @@ class DataViewer {
 
             const distributionContainer = document.createElement('div')
             distributionContainer.className = 'distribution-container'
-            distributionContainer.id = `distribution-${this.columns.indexOf(column)}`
+            distributionContainer.id = `distribution-${index}`
             th.appendChild(distributionContainer)
 
             this.tableHeader.appendChild(th)
@@ -439,7 +447,7 @@ class DataViewer {
                 td.textContent = Number(cellValue).toLocaleString()
                 td.classList.add('numeric-cell')
                 } else {
-                td.textContent = this.escapeHtml(String(cellValue ?? ''))
+                td.textContent = String(cellValue ?? '')
                 }
 
                 if (this.isNumericColumn(column)) {
@@ -529,14 +537,14 @@ class DataViewer {
     async updateCharts() {
         this.destroyAllCharts()
 
-        for (const column of this.columns) {
+        for (const [index, column] of this.columns.entries()) {
             const data = this.distributions[column]
             if (!this.isValidDistributionData(data)) continue
 
-            const distributionContainer = this.getDistributionContainer(column)
+            const distributionContainer = this.getDistributionContainer(index)
             if (!distributionContainer) continue
 
-            await this.createChartForColumn(column, data, distributionContainer)
+            this.createChartForColumn(column, data, distributionContainer)
         }
     }
 
@@ -553,11 +561,11 @@ class DataViewer {
         return data && data.labels && data.labels.length > 0
     }
 
-    getDistributionContainer(column) {
-        return document.querySelector(`#distribution-${this.columns.indexOf(column)}`)
+    getDistributionContainer(index) {
+        return this.container.querySelector(`#distribution-${index}`)
     }
 
-    async createChartForColumn(column, data, container) {
+    createChartForColumn(column, data, container) {
         container.innerHTML = '' 
 
         if (data.type === 'numeric') {
@@ -568,21 +576,16 @@ class DataViewer {
             const canvas = document.createElement('canvas')
             canvas.width = 400
             canvas.height = 200
-            canvas.style.width = '180px'
-            canvas.style.height = '80px'
+            canvas.style.width = '100%'
+            canvas.style.height = '100%'
+            canvas.style.display = 'block'
             chartDiv.appendChild(canvas)
-
-            await new Promise(resolve => {
-                requestAnimationFrame(() => {
-                    requestAnimationFrame(resolve)
-                })
-            })
 
             const ctx = canvas.getContext('2d')
             if (!ctx) return
 
             try {
-                await this.createNumericChart(column, data, ctx)
+                this.createNumericChart(column, data, ctx)
             } catch (error) {
                 console.error(`Error creating chart for column ${column}:`, error)
             }
@@ -592,8 +595,9 @@ class DataViewer {
     }
 
 
-    async createNumericChart(column, data, ctx) {
+    createNumericChart(column, data, ctx) {
         const originalColors = data.counts.map(() => colorPonit)
+        const totalCount = data.counts.reduce((a, b) => a + b, 0)
         
         this.charts[column] = new Chart(ctx, {
             type: 'bar',
@@ -604,7 +608,6 @@ class DataViewer {
                     backgroundColor: originalColors,
                     borderWidth: 0,
                     hoverBackgroundColor: colorPointHover, 
-                    categoryPercentage: 1.0,
                     barThickness: 'flex',
                     barPercentage: 1.0,
                     categoryPercentage: 0.8,    
@@ -625,8 +628,7 @@ class DataViewer {
                         callbacks: {
                             label: (context) => {
                                 const value = context.raw
-                                const total = data.counts.reduce((a, b) => a + b, 0)
-                                const percent = ((value / total) * 100).toFixed(1)
+                                const percent = totalCount > 0 ? ((value / totalCount) * 100).toFixed(1) : '0.0'
                                 return `${value.toLocaleString()}건 (${percent}%)`
                             }
                         },
@@ -637,12 +639,18 @@ class DataViewer {
                         display: true,
                         ticks: {
                             padding : 0,
-                            callback: function(value, index, ticks) {
+                            maxRotation: 0,
+                            minRotation: 0,
+                            callback: function(value, index) {
                                 const formatKMB = (val) => {
-                                    const num = Number(val)
-                                    if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M'
-                                    if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K'
-                                    return num.toString() 
+                                    const num = Number.parseFloat(val)
+                                    if (!Number.isFinite(num)) {
+                                        return String(val).slice(0, 8)
+                                    }
+                                    const abs = Math.abs(num)
+                                    if (abs >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M'
+                                    if (abs >= 1_000) return (num / 1_000).toFixed(1) + 'K'
+                                    return Number.isInteger(num) ? num.toString() : num.toFixed(1)
                                 }
 
                                 if (data.labels.length === 1) {
@@ -668,13 +676,15 @@ class DataViewer {
                         },
                         grid: {
                             display: false
-                        }
+                        },
+                        border: { display: false }
                     },
                     y: {
                         display: false,
                         grid: {
                             display: false
-                        }
+                        },
+                        border: { display: false }
                     }
                 }
             }
@@ -693,7 +703,7 @@ class DataViewer {
         topValues.forEach(({ label, count }) => {
             const valueDiv = document.createElement('div')
             valueDiv.className = 'top-value'
-            const percent = ((count / total) * 100).toFixed(1)
+            const percent = total > 0 ? ((count / total) * 100).toFixed(1) : '0.0'
             valueDiv.textContent = `${label}: ${percent}%`
             valueDiv.setAttribute('data-count', `${label}: ${count.toLocaleString()}건`)
             labelsDiv.appendChild(valueDiv)
@@ -728,8 +738,7 @@ class DataViewer {
     }
 
     updatePagination() {
-        this.prevButton.disabled = this.currentPage === 1
-        this.nextButton.disabled = this.currentPage >= this.totalPages
+        this.totalPages = Math.max(1, this.totalPages || 1)
         
         this.totalRowsElement.textContent = `총 ${this.totalRows.toLocaleString()}건`
         this.pageInfo.textContent = `${this.currentPage.toLocaleString()} / ${this.totalPages.toLocaleString()}`
@@ -737,14 +746,12 @@ class DataViewer {
         this.nextButton.disabled = this.currentPage >= this.totalPages
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div')
-        div.textContent = text
-        return div.innerHTML
-    }
-
     showError(message) {
-        this.container.innerHTML = `<div class="error-message">${message}</div>`;
+        this.container.innerHTML = ''
+        const errorDiv = document.createElement('div')
+        errorDiv.className = 'error-message'
+        errorDiv.textContent = message
+        this.container.appendChild(errorDiv)
     }
 }
 
