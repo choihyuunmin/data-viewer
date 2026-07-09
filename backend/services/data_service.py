@@ -77,6 +77,18 @@ class DataService:
         self.url = ""
         self.use_duckdb_view = False
         self.total_rows_cache = None
+        try:
+            self.con.unregister("df")
+        except Exception:
+            pass
+        try:
+            self.con.execute("DROP VIEW IF EXISTS df")
+        except Exception:
+            pass
+        try:
+            self.con.execute("DROP TABLE IF EXISTS df")
+        except Exception:
+            pass
 
     def _get_extension(self, file_name: str) -> str:
         return os.path.splitext(file_name or "")[1].lower().lstrip(".")
@@ -356,7 +368,7 @@ class DataService:
                     raise RuntimeError("Excel 파일의 Parquet 캐시를 생성하지 못했습니다.")
                 read_target = parquet_path
             elif ext in DELIMITED_FILE_TYPES:
-                read_target = abs_path if is_large_initial else parquet_path if parquet_exists else abs_path
+                read_target = parquet_path if parquet_exists else abs_path
             else:
                 read_target = abs_path
             read_target_ext = self._get_extension(read_target)
