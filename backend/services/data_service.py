@@ -11,6 +11,8 @@ import numpy as np
 from minio import Minio
 from minio.error import S3Error
 
+from errors import DataViewerError, FileTooLargeError, UnsupportedFileTypeError
+from services.geospatial_service import GeospatialService
 from config import (
     MINIO_ENDPOINT,
     MINIO_ACCESS_KEY,
@@ -25,27 +27,12 @@ DELIMITED_FILE_TYPES = {"csv", "tsv", "psv", "txt"}
 EXCEL_FILE_TYPES = {"xlsx", "xls"}
 
 
-class DataViewerError(Exception):
-    status_code = 400
-
-    def __init__(self, detail: str):
-        super().__init__(detail)
-        self.detail = detail
-
-
-class UnsupportedFileTypeError(DataViewerError):
-    status_code = 415
-
-
-class FileTooLargeError(DataViewerError):
-    status_code = 413
-
-
 class DataService:
     def __init__(self):
         self.minio_client = self._init_minio()
         self.url = ""
         self.con = duckdb.connect()
+        self.geospatial_service = GeospatialService(self.minio_client, NAS_ROOT_PATH)
         self.use_duckdb_view = False
         self.total_rows_cache = None
         self.large_file_threshold_bytes = int(os.environ.get("LARGE_FILE_THRESHOLD_BYTES", str(256 * 1024 * 1024)))
@@ -212,7 +199,6 @@ class DataService:
             return self.con.execute(f"SELECT * FROM ({query}) AS sample_src LIMIT {self.large_sample_rows}").pl()
         except Exception:
             return self.con.execute("SELECT * FROM df LIMIT 10").pl()
-
     def _resolve_nas_path(self, bucket_name: str, file_name: str) -> str:
         if file_name.startswith('/'):
             file_name = file_name[1:]
@@ -292,7 +278,7 @@ class DataService:
         """pre-signed URL을 생성합니다."""
         if not self.minio_client:
             raise ConnectionError("MinIO 클라이언트가 설정되지 않아 URL을 생성할 수 없습니다.")
-        
+
         if not self.minio_client.bucket_exists(bucket_name):
             raise FileNotFoundError(f"버킷 '{bucket_name}'을 찾을 수 없습니다.")
 
@@ -577,6 +563,12 @@ class DataService:
 
     def get_dataset_details(self, bucket_name: str, file_name: str, storage_type: str | None = None):
         """데이터셋의 초기 정보 반환"""
+        if self.geospatial_service.supports(file_name):
+            return self.geospatial_service.get_dataset_details(
+                bucket_name,
+                file_name,
+                storage_type,
+            )
         self._reset_dataset_state()
         df = self._get_or_load_dataframe(bucket_name, file_name, storage_type)
         preview = self.con.execute(f"SELECT * FROM df LIMIT 10").pl()
@@ -607,6 +599,28 @@ class DataService:
                 "distributions": distributions,
                 "total": len(df)
             }
+
+    def get_map_preview(
+        self,
+        bucket_name: str,
+        file_name: str,
+        storage_type: str | None = None,
+        layer: str | None = None,
+        bbox: tuple[float, float, float, float] | None = None,
+        limit: int | None = None,
+        simplify_tolerance: float = 0.0,
+        fields: list[str] | None = None,
+    ):
+        return self.geospatial_service.get_preview(
+            bucket_name=bucket_name,
+            file_name=file_name,
+            storage_type=storage_type,
+            layer=layer,
+            bbox=bbox,
+            limit=limit,
+            simplify_tolerance=simplify_tolerance,
+            fields=fields,
+        )
 
     def get_paged_data(self, query: str, page: int, page_size: int):
         base_query = self._rewrite_user_query(query)

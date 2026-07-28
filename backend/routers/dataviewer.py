@@ -2,8 +2,10 @@ import logging
 import io
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from models import LoadDatasetRequest, QueryRequest, DownloadRequest
-from services.data_service import DataService, DataViewerError
+from starlette.concurrency import run_in_threadpool
+from errors import DataViewerError
+from models import DownloadRequest, LoadDatasetRequest, MapPreviewRequest, QueryRequest
+from services.data_service import DataService
 
 router = APIRouter(prefix="/dataviewer", tags=["DataViewer"])
 service = DataService()
@@ -12,11 +14,24 @@ logger = logging.getLogger(__name__)
 @router.post("/load_dataset")
 async def load_dataset(request: LoadDatasetRequest):
     try:
-        logger.info("/load_dataset 호출", extra={"bucket": request.bucket_name, "file_name": request.file_name})
+        logger.info(
+            "/load_dataset 호출",
+            extra={
+                "bucket": request.bucket_name,
+                "file_name": request.file_name,
+                "storage_type": request.type or "minio",
+                "full_path": f"{request.bucket_name}/{request.file_name}"
+            }
+        )
         if request.type not in ('', 'nas', 'minio'):
             raise HTTPException(status_code=400, detail="type 파라미터는 'nas' 또는 'minio'만 허용됩니다.")
         
-        return service.get_dataset_details(request.bucket_name, request.file_name, request.type)
+        return await run_in_threadpool(
+            service.get_dataset_details,
+            request.bucket_name,
+            request.file_name,
+            request.type,
+        )
     except DataViewerError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     except FileNotFoundError as e:
@@ -24,6 +39,42 @@ async def load_dataset(request: LoadDatasetRequest):
     except Exception as e:
         logger.exception("load_dataset 실패")
         raise HTTPException(status_code=500, detail=f"Failed to load dataset: {str(e)}")
+
+
+@router.post("/map_preview")
+async def map_preview(request: MapPreviewRequest):
+    try:
+        logger.info(
+            "/map_preview 호출",
+            extra={
+                "bucket": request.bucket_name,
+                "file_name": request.file_name,
+                "layer": request.layer,
+                "limit": request.limit,
+                "bbox": request.bbox,
+            },
+        )
+        if request.type not in ("", "nas", "minio"):
+            raise HTTPException(status_code=400, detail="type 파라미터는 'nas' 또는 'minio'만 허용됩니다.")
+        return await run_in_threadpool(
+            service.get_map_preview,
+            bucket_name=request.bucket_name,
+            file_name=request.file_name,
+            storage_type=request.type,
+            layer=request.layer,
+            bbox=request.bbox,
+            limit=request.limit,
+            simplify_tolerance=request.simplify_tolerance,
+            fields=request.fields,
+        )
+    except DataViewerError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e) or "File not found")
+    except Exception as e:
+        logger.exception("map_preview 실패")
+        raise HTTPException(status_code=500, detail=f"Failed to preview map: {str(e)}")
+
 
 @router.post("/page")
 async def get_page(request: QueryRequest):

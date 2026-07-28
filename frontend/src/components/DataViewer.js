@@ -1,5 +1,15 @@
 
 import Chart from 'chart.js/auto'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import {
+    createIcons,
+    Layers3,
+    Map,
+    Maximize2,
+    RefreshCw,
+    Table2,
+} from 'lucide'
 
 const getCssVar = (varName) => {
     return getComputedStyle(document.documentElement).getPropertyValue(varName).trim()
@@ -31,6 +41,17 @@ class DataViewer {
         this.sortDirection = null
         this.bucket_name = null;
         this.file_name = null;
+        this.storage = null
+        this.isGeospatial = false
+        this.map = null
+        this.mapRenderer = null
+        this.geoJsonLayer = null
+        this.geoMetadata = null
+        this.selectedGeoLayer = null
+        this.geoPreviewLimit = 1000
+        this.geoLastUsedBounds = false
+        this.geoPreviewController = null
+        this.geoPreviewRequestId = 0
 
         this.initializeElements()
         this.attachEventListeners()
@@ -65,9 +86,12 @@ class DataViewer {
             <div class="loading-overlay">
                 <div class="loading-spinner"></div>
             </div>
-            <div class="data-viewer-container">          
-                <h3>DataViewer</h3>
-                <div class="query-section">
+            <div class="data-viewer-container">
+                <header class="viewer-header">
+                    <h3>DataViewer</h3>
+                    <p id="viewerFileName" class="viewer-file-name"></p>
+                </header>
+                <div id="querySection" class="query-section">
                     <button id="toggleQueryButton" class="execute-button small-toggle">쿼리 실행</button>
                     <div class="query-input-wrapper" style="display: none;">
                         <div class="query-guide">
@@ -94,34 +118,81 @@ class DataViewer {
                         <div class="from-desc">from 절은 data 테이블로 고정되어 있습니다.</div>
                     </div>
                 </div>
-                
-                <div class="summary-row" style="display: flex; justify-content: space-between; align-items: center; margin: 10px 0;">
-                    <div id="totalRows" class="total-rows">총 0건</div>
-                    <button id="downloadButton" class="execute-button" style="height: 32px; padding: 6px 12px;">다운로드</button>
-                </div>
-                <div id="tableContainer" class="table-container">
-                    <table>
-                        <thead>
-                            <tr id="tableHeader"></tr>
-                        </thead>
-                        <tbody id="tableBody"></tbody>
-                    </table>
-                </div>
-                <div class="pagination">
-                    <button 
-                        id="prevButton"
-                        class="page-button">
-                        이전
-                    </button>
-                    <span id="pageInfo" class="page-info">
-                        1 / 1
-                    </span>
-                    <button 
-                        id="nextButton"
-                        class="page-button">
-                        다음
-                    </button>
-                </div>
+
+                <section id="geoSection" class="geo-section" hidden>
+                    <div class="geo-toolbar">
+                        <div class="view-tabs" role="tablist" aria-label="미리보기 방식">
+                            <button id="mapViewButton" class="view-tab active" type="button" role="tab" aria-selected="true">
+                                <i data-lucide="map"></i>
+                                지도
+                            </button>
+                            <button id="tableViewButton" class="view-tab" type="button" role="tab" aria-selected="false">
+                                <i data-lucide="table-2"></i>
+                                속성
+                            </button>
+                        </div>
+                        <label class="geo-control">
+                            <span><i data-lucide="layers-3"></i> 레이어</span>
+                            <select id="geoLayerSelect"></select>
+                        </label>
+                        <label class="geo-control">
+                            <span>표시 개수</span>
+                            <select id="geoLimitSelect">
+                                <option value="500">500</option>
+                                <option value="1000" selected>1,000</option>
+                                <option value="2000">2,000</option>
+                                <option value="5000">5,000</option>
+                            </select>
+                        </label>
+                        <div class="geo-actions">
+                            <button id="reloadBoundsButton" class="map-action-button" type="button">
+                                <i data-lucide="refresh-cw"></i>
+                                현재 영역 불러오기
+                            </button>
+                            <button id="fullExtentButton" class="map-action-button secondary" type="button">
+                                <i data-lucide="maximize-2"></i>
+                                전체 범위
+                            </button>
+                        </div>
+                    </div>
+                    <div id="geoMapPanel">
+                        <div class="geo-status-row">
+                            <span id="geoPreviewStatus">공간 데이터 준비 중</span>
+                            <span id="geoCrsStatus"></span>
+                        </div>
+                        <div id="mapContainer" class="map-container" aria-label="공간 데이터 지도 미리보기"></div>
+                    </div>
+                </section>
+
+                <section id="tablePanel">
+                    <div class="summary-row">
+                        <div id="totalRows" class="total-rows">총 0건</div>
+                        <button id="downloadButton" class="execute-button compact-button">다운로드</button>
+                    </div>
+                    <div id="tableContainer" class="table-container">
+                        <table>
+                            <thead>
+                                <tr id="tableHeader"></tr>
+                            </thead>
+                            <tbody id="tableBody"></tbody>
+                        </table>
+                    </div>
+                    <div id="pagination" class="pagination">
+                        <button
+                            id="prevButton"
+                            class="page-button">
+                            이전
+                        </button>
+                        <span id="pageInfo" class="page-info">
+                            1 / 1
+                        </span>
+                        <button
+                            id="nextButton"
+                            class="page-button">
+                            다음
+                        </button>
+                    </div>
+                </section>
             </div>
         `
 
@@ -138,6 +209,21 @@ class DataViewer {
         this.pageInfo = this.container.querySelector('#pageInfo')
         this.toggleQueryButton = this.container.querySelector('#toggleQueryButton');
         this.queryInputWrapper = this.container.querySelector('.query-input-wrapper');
+        this.viewerFileName = this.container.querySelector('#viewerFileName')
+        this.querySection = this.container.querySelector('#querySection')
+        this.geoSection = this.container.querySelector('#geoSection')
+        this.geoMapPanel = this.container.querySelector('#geoMapPanel')
+        this.mapContainer = this.container.querySelector('#mapContainer')
+        this.mapViewButton = this.container.querySelector('#mapViewButton')
+        this.tableViewButton = this.container.querySelector('#tableViewButton')
+        this.geoLayerSelect = this.container.querySelector('#geoLayerSelect')
+        this.geoLimitSelect = this.container.querySelector('#geoLimitSelect')
+        this.reloadBoundsButton = this.container.querySelector('#reloadBoundsButton')
+        this.fullExtentButton = this.container.querySelector('#fullExtentButton')
+        this.geoPreviewStatus = this.container.querySelector('#geoPreviewStatus')
+        this.geoCrsStatus = this.container.querySelector('#geoCrsStatus')
+        this.tablePanel = this.container.querySelector('#tablePanel')
+        this.pagination = this.container.querySelector('#pagination')
 
         this.queryInput.value = this.query
 
@@ -149,6 +235,15 @@ class DataViewer {
                 this.queryInputWrapper.style.display = 'none';
             }
         });
+
+        createIcons({
+            icons: { Layers3, Map, Maximize2, RefreshCw, Table2 },
+            attrs: {
+                width: 16,
+                height: 16,
+                'aria-hidden': 'true',
+            },
+        })
     }
     
 
@@ -190,6 +285,25 @@ class DataViewer {
                 this.currentPage++
                 this.changePage(this.currentPage)
             }
+        })
+
+        this.mapViewButton.addEventListener('click', () => this.setGeoView('map'))
+        this.tableViewButton.addEventListener('click', () => this.setGeoView('table'))
+        this.reloadBoundsButton.addEventListener('click', () => {
+            this.loadMapPreview({ useBounds: true })
+        })
+        this.fullExtentButton.addEventListener('click', () => {
+            this.fitSelectedLayer()
+            this.loadMapPreview({ useBounds: false })
+        })
+        this.geoLayerSelect.addEventListener('change', () => {
+            this.selectedGeoLayer = this.geoLayerSelect.value
+            this.fitSelectedLayer()
+            this.loadMapPreview({ useBounds: false })
+        })
+        this.geoLimitSelect.addEventListener('change', () => {
+            this.geoPreviewLimit = Number(this.geoLimitSelect.value)
+            this.loadMapPreview({ useBounds: this.geoLastUsedBounds })
         })
     }
 
@@ -246,6 +360,22 @@ class DataViewer {
                 this.totalRows = data.total
                 this.totalPages = Math.ceil(this.totalRows / this.pageSize)
                 this.bucket_name = bucketName
+                this.file_name = fileName
+                this.storage = storage || ''
+                this.viewerFileName.textContent = fileName
+                this.isGeospatial = data.dataset_type === 'geospatial'
+
+                if (this.isGeospatial) {
+                    await this.setupGeospatialDataset(data)
+                    this.sendHeightToParent()
+                    return
+                }
+
+                this.geoSection.hidden = true
+                this.querySection.hidden = false
+                this.tablePanel.hidden = false
+                this.pagination.hidden = false
+                this.downloadButton.hidden = false
                 await this.updateTable()
                 this.updatePagination()
                 this.sendHeightToParent()
@@ -257,6 +387,207 @@ class DataViewer {
             this.loading = false
             this.hideLoading();
         }
+    }
+
+    async setupGeospatialDataset(data) {
+        this.geoMetadata = data.map
+        this.selectedGeoLayer = data.map.selected_layer
+        this.geoPreviewLimit = Number(data.map.preview_limit || 1000)
+        this.geoLimitSelect.value = String(this.geoPreviewLimit)
+        this.querySection.hidden = true
+        this.geoSection.hidden = false
+        this.downloadButton.hidden = true
+        this.pagination.hidden = true
+
+        this.geoLayerSelect.innerHTML = ''
+        data.map.layers.forEach(layer => {
+            const option = document.createElement('option')
+            option.value = layer.id
+            option.textContent = `${layer.name} (${layer.feature_count.toLocaleString()})`
+            option.selected = layer.id === this.selectedGeoLayer
+            this.geoLayerSelect.appendChild(option)
+        })
+        this.geoLayerSelect.closest('.geo-control').hidden = data.map.layers.length <= 1
+
+        this.initializeMap()
+        this.fitSelectedLayer()
+        this.setGeoView('map')
+        await this.loadMapPreview({ useBounds: false })
+    }
+
+    initializeMap() {
+        if (this.map) {
+            this.map.remove()
+        }
+        this.map = L.map(this.mapContainer, {
+            preferCanvas: true,
+            zoomControl: true,
+        })
+        this.mapRenderer = L.canvas({ padding: 0.5 })
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            maxZoom: 20,
+            subdomains: 'abcd',
+            attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+        }).addTo(this.map)
+    }
+
+    setGeoView(view) {
+        const showMap = view === 'map'
+        this.geoMapPanel.hidden = !showMap
+        this.tablePanel.hidden = showMap
+        this.mapViewButton.classList.toggle('active', showMap)
+        this.tableViewButton.classList.toggle('active', !showMap)
+        this.mapViewButton.setAttribute('aria-selected', String(showMap))
+        this.tableViewButton.setAttribute('aria-selected', String(!showMap))
+        if (showMap && this.map) {
+            requestAnimationFrame(() => this.map.invalidateSize())
+        }
+    }
+
+    getSelectedLayerMetadata() {
+        return this.geoMetadata?.layers?.find(layer => layer.id === this.selectedGeoLayer)
+    }
+
+    fitSelectedLayer() {
+        const bounds = this.getSelectedLayerMetadata()?.bounds
+        if (!this.map || !bounds || bounds.length !== 4) return
+        this.map.fitBounds(
+            [[bounds[1], bounds[0]], [bounds[3], bounds[2]]],
+            { padding: [24, 24], maxZoom: 16 },
+        )
+    }
+
+    async loadMapPreview({ useBounds = false } = {}) {
+        if (!this.map || !this.selectedGeoLayer) return
+        this.geoPreviewController?.abort()
+        this.geoPreviewController = new AbortController()
+        const requestId = ++this.geoPreviewRequestId
+        this.showLoading()
+        this.geoLastUsedBounds = useBounds
+        this.geoPreviewStatus.textContent = '공간 데이터 불러오는 중'
+
+        const requestBody = {
+            bucket_name: this.bucket_name,
+            file_name: this.file_name,
+            type: this.storage || '',
+            layer: this.selectedGeoLayer,
+            limit: this.geoPreviewLimit,
+            simplify_tolerance: this.getMapSimplificationTolerance(),
+        }
+        if (useBounds) {
+            const bounds = this.map.getBounds()
+            requestBody.bbox = [
+                bounds.getWest(),
+                bounds.getSouth(),
+                bounds.getEast(),
+                bounds.getNorth(),
+            ]
+        }
+
+        try {
+            const response = await fetch(`${this.apiPrefix}/map_preview`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestBody),
+                signal: this.geoPreviewController.signal,
+            })
+            if (!response.ok) {
+                throw new Error(await this.getResponseErrorMessage(response, '지도 미리보기를 불러오지 못했습니다.'))
+            }
+            const featureCollection = await response.json()
+            if (requestId !== this.geoPreviewRequestId) return
+            this.renderMapPreview(featureCollection)
+            await this.updateGeospatialTable(featureCollection)
+            this.updateGeoStatus(featureCollection.metadata)
+        } catch (error) {
+            if (error.name === 'AbortError') return
+            console.error('Map preview error:', error)
+            this.geoPreviewStatus.textContent = error.message || '지도 미리보기를 불러오지 못했습니다.'
+        } finally {
+            if (requestId === this.geoPreviewRequestId) {
+                this.hideLoading()
+            }
+        }
+    }
+
+    renderMapPreview(featureCollection) {
+        if (this.geoJsonLayer) {
+            this.geoJsonLayer.remove()
+        }
+        this.geoJsonLayer = L.geoJSON(featureCollection, {
+            renderer: this.mapRenderer,
+            style: feature => {
+                const isPoint = ['Point', 'MultiPoint'].includes(feature.geometry?.type)
+                return isPoint
+                    ? {
+                        color: '#ffffff',
+                        weight: 1.2,
+                        opacity: 0.95,
+                        fillColor: '#d92d3f',
+                        fillOpacity: 0.96,
+                    }
+                    : {
+                        color: '#0067d8',
+                        weight: 2.2,
+                        opacity: 0.98,
+                        fillColor: '#169b84',
+                        fillOpacity: 0.28,
+                    }
+            },
+            pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+                renderer: this.mapRenderer,
+                radius: 4.5,
+                color: '#ffffff',
+                weight: 1.2,
+                opacity: 0.95,
+                fillColor: '#d92d3f',
+                fillOpacity: 0.96,
+            }),
+            onEachFeature: (feature, layer) => {
+                layer.bindPopup(() => this.createFeaturePopup(feature.properties))
+            },
+        }).addTo(this.map)
+    }
+
+    createFeaturePopup(properties = {}) {
+        const wrapper = document.createElement('div')
+        wrapper.className = 'feature-popup'
+        Object.entries(properties).slice(0, 10).forEach(([key, value]) => {
+            const row = document.createElement('div')
+            const label = document.createElement('strong')
+            const content = document.createElement('span')
+            label.textContent = key
+            content.textContent = String(value ?? '')
+            row.append(label, content)
+            wrapper.appendChild(row)
+        })
+        return wrapper
+    }
+
+    async updateGeospatialTable(featureCollection) {
+        const metadata = featureCollection.metadata || {}
+        this.columns = metadata.fields || []
+        this.tableData = featureCollection.features.map(feature => feature.properties || {})
+        this.distributions = {}
+        this.totalRows = metadata.feature_count || 0
+        this.totalPages = 1
+        await this.updateTable()
+        this.totalRowsElement.textContent = `표시 ${this.tableData.length.toLocaleString()} / 전체 ${this.totalRows.toLocaleString()}건`
+    }
+
+    updateGeoStatus(metadata = {}) {
+        const scope = metadata.bbox ? '현재 영역' : metadata.sampled ? '대표 표본' : '전체'
+        const more = metadata.has_more ? ' · 추가 데이터 있음' : ''
+        this.geoPreviewStatus.textContent =
+            `${scope} ${Number(metadata.returned || 0).toLocaleString()}개 표시` +
+            ` / 전체 ${Number(metadata.feature_count || 0).toLocaleString()}개${more}`
+        this.geoCrsStatus.textContent = metadata.crs_warning || metadata.source_crs || ''
+    }
+
+    getMapSimplificationTolerance() {
+        if (!this.map) return 0
+        const zoom = this.map.getZoom()
+        return Math.min(5, 360 / (256 * Math.pow(2, zoom)) * 1.5)
     }
 
     async executeQuery() {
@@ -419,9 +750,11 @@ class DataViewer {
             th.appendChild(titleDiv)
 
             const distributionContainer = document.createElement('div')
-            distributionContainer.className = 'distribution-container'
-            distributionContainer.id = `distribution-${index}`
-            th.appendChild(distributionContainer)
+            if (!this.isGeospatial) {
+                distributionContainer.className = 'distribution-container'
+                distributionContainer.id = `distribution-${index}`
+                th.appendChild(distributionContainer)
+            }
 
             this.tableHeader.appendChild(th)
         })
